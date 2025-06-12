@@ -31,10 +31,7 @@ def strip_ansi(text: str) -> str:
 
 
 def is_numeric_or_neutral(text: str) -> bool:
-    clean = strip_ansi(text).strip()
-    if clean in NEUTRAL_VALUES:
-        return True
-    return bool(NUMERIC_PATTERN.match(clean))
+    return (clean := strip_ansi(text).strip()) in NEUTRAL_VALUES or bool(NUMERIC_PATTERN.match(clean))
 
 
 def split_row(line: str) -> list[str]:
@@ -45,26 +42,18 @@ def detect_column_properties(rows: list[list[str]]) -> tuple[list[int], list[boo
     if not rows:
         return [], []
 
-    num_cols = max(len(row) for row in rows)
-    widths = [0] * num_cols
+    num_cols = max(map(len, rows))
     is_numeric = [True] * num_cols
+    widths = [0] * num_cols
 
-    # Determine column widths (all rows)
-    for row in rows:
-        for i in range(num_cols):
-            cell = row[i] if i < len(row) else ''
-            visible_len = len(strip_ansi(cell))
-            widths[i] = max(widths[i], visible_len)
-
-    # Detect numeric columns (data rows only)
-    for row in rows[1:]:
-        for i in range(num_cols):
-            cell = row[i] if i < len(row) else ''
-            if not is_numeric_or_neutral(cell):
-                is_numeric[i] = False
+    # Determine column widths
+    for row_index, row in enumerate(rows):
+        for i, cell in enumerate(row):
+            widths[i] = max(widths[i], len(strip_ansi(cell)))                           # largest value found
+            is_numeric[i] &= (is_numeric_or_neutral(cell) if row_index > 0 else True)   # false if any value isn't numeric. Don't check numeric if on first row, i.e. header
 
     return widths, is_numeric
-
+    
 
 def format_row(cells: list[str], widths: list[int], is_numeric: list[bool], sep_width: int) -> str:
     spacer = ' ' * sep_width

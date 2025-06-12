@@ -1,50 +1,25 @@
 #!/usr/bin/python3
 
-# tests/test_table_formatter.py
 import os
 import io
 import sys
 import subprocess
 import pytest
-import textwrap
 
+# import from a nearby file
 from table_formatter import (  # module under test
     strip_ansi,
-    split_row,
-    detect_column_properties,
-    format_row,
     TableFormatter,
     is_numeric_or_neutral,
-    main as table_main,
 )
 
-# —— Fixtures ——
-@pytest.fixture
-def sample_lines():
-    """Rows including an ANSI-colored name."""
-    red = '[31mBob[0m'
-    return [
-        "Name  Age    City",
-        "Alice    30  New York",
-        f"{red}	25  Los Angeles",
-        "Charlie  35	Chicago",
-    ]
 
-@pytest.fixture
-def numeric_lines():
-    return [
-        "Label  A  B",
-        "Row1  2  10",
-        "Row2  123  5",
-        "Row3  -  7",
-    ]
-    
-    # numerical column needs to align right
-    # extra excessive spaces need to be trimmed off
-    # tabs need to be deleted (including '	')
-    # 1-spaced words need to stay together
-    # colored word needs to avoid padding the whole column with invisible
-sample_table = [
+# numerical column needs to align right
+# extra excessive spaces need to be trimmed off
+# tabs need to be deleted (including '	')
+# 1-spaced words need to stay together
+# colored word needs to avoid padding the whole column with invisible
+sample_input = [
     "num  word\ta  long_word   b",
     "   1  one   ",
     "2  very long spaced  a  c  d  e	f\tg",
@@ -59,7 +34,7 @@ sample_output = [
 ]
 
 smtouhou_data =  [
-    '#      Name            Lv.   HP      MP      ATK   DEF',
+    '  #      Name            Lv.   HP      MP      ATK   DEF',
     '1      Reimu            40      193   211   63      82   ',
     '2      Marisa         28      125   166   46      57   ',
     '3      Shingyoku      89      620   505   202   182',
@@ -89,15 +64,30 @@ def script_path():
 def test_piped_input(script_path):
     proc = subprocess.run(
         [sys.executable, script_path],
-        input='\n'.join(sample_table),
+        input='\n'.join(sample_input),
         text=True,
         capture_output=True,
     )
     assert proc.returncode == 0
     assert proc.stdout.removesuffix('\n') == '\n'.join(sample_output)
     
+def test_file_input(tmp_path, script_path):
+    # Create a temporary file with sample_table content
+    file_path = tmp_path / "input.txt"
+    file_path.write_text('\n'.join(sample_input))
+
+    # Run the script with the file as input
+    proc = subprocess.run(
+        [sys.executable, script_path, str(file_path)],
+        text=True,
+        capture_output=True,
+    )
+
+    assert proc.returncode == 0
+    assert proc.stdout.removesuffix('\n') == '\n'.join(sample_output)
+    
 def test_directly():
-    tf = TableFormatter(lines=sample_table)
+    tf = TableFormatter(lines=sample_input)
     assert tf.format() == sample_output
     
     tf = TableFormatter(lines=smtouhou_data)
