@@ -1,0 +1,19 @@
+
+[package]
+name = "table_formatter"
+version = "0.1.0"
+edition = "2021"
+description = "Align whitespace-delimited columns into a neat table"
+authors = ["Your Name <your.email@example.com>"]
+
+[dependencies]
+clap = { version = "4.5.40", features = ["derive"] }
+regex = "1.11.1"
+rayon = "1.10"
+
+[dev-dependencies]
+assert_cmd = "2.0.14"
+tempfile = "3.10.1"
+
+[features]
+cli_tests = []

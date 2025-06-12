@@ -1,6 +1,4 @@
 #!/usr/bin/python3
-#!/usr/bin/env python3
-# table_formatter.py
 
 import argparse
 import re
