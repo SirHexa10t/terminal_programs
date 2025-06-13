@@ -64,6 +64,7 @@ mod cli_tests {
     use assert_cmd::Command;
     use std::fs;
     use tempfile::NamedTempFile;
+    use std::path::PathBuf;
 
     #[test]
     fn test_file_input() {
@@ -75,6 +76,39 @@ mod cli_tests {
             .assert()
             .success()
             .stdout(format!("{}\n", SAMPLE_OUTPUT.join("\n")));
+    }
+
+    // covers test for symbols that take a different number of chars than displayed
+    #[test]
+    fn test_large_file_input() {
+        let test_file_path = PathBuf::from("testing/edf4.1_ranger_testfile.csv");
+
+        let output = Command::cargo_bin("table_formatter").unwrap()
+            .arg(&test_file_path)
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+
+        let stdout = String::from_utf8_lossy(&output);
+
+        assert!(
+            stdout.contains("Type           LV  LV                                 DPS   RDPS     DPM  Ammo  \"Rate of Fire (fire/sec)\"  Damage  \"Reload (sec)\"  \"Range (m)\"  Accuracy                    Zoom  Lock time  -    -        time per mag"),
+            "Header line missing or messed-up"
+        );
+        assert!(
+            stdout.contains("Sniper         72  Nova Buster ZD                   80000  80000   80000     1                          1   80000               0         1240  S+                          5x            -  -    -                   1"),
+            "Line below header missing or messed-up"
+        );
+        assert!(
+            stdout.contains("GrenL          37  Splash Grenade α                 20000   2857   20000     1                          1   20000               6           10  Timed / 10sec               -             -  -    -                   7"),
+            "Line with 2-char symbol missing or messed-up"
+        );
+        assert!(
+            stdout.contains("Sniper          0  MMF40                               77     60     550     5                        0.7     110               2          600  S+                          4x            -  -    -         9.142857143"),
+            "Arbitrary late line missing or messed-up"
+        );
     }
 
     #[test]

@@ -4,20 +4,26 @@ use regex::Regex;
 use std::io::{self, BufRead, BufReader};
 use std::fs::File;
 use std::sync::LazyLock;
+use itertools::izip;
+use std::fmt::Write;
+use std::iter::repeat;
 
 // ——— Configuration ——————————————————————————————
 const DEFAULT_SEPARATOR: usize = 2;
 
 // Regular expression patterns
 static SPLIT_PATTERN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s{2,}|\t+").unwrap());
-static ANSI_ESCAPE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])").unwrap());
 static NUMERIC_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^[+-]?[0-9]+(?:\.[0-9]+)?\s?[pKkMmGgTt]?(?:i?[bB]?(/s)?|%|Hz|@[0-9]+Hz)?$").unwrap()
 });
 
 // ——— Utilities ——————————————————————————————————————
 pub fn strip_ansi(text: &str) -> String {
-    ANSI_ESCAPE.replace_all(text, "").to_string()
+    console::strip_ansi_codes(text).to_string()
+}
+
+pub fn visible_len(text: &str) -> usize {
+    console::measure_text_width(&console::strip_ansi_codes(text))
 }
 
 pub fn is_numeric_or_neutral(text: &str) -> bool {
@@ -40,7 +46,7 @@ fn detect_column_properties(rows: &[Vec<String>]) -> (Vec<usize>, Vec<bool>) {
         .map(|col_idx| {
             let width = rows.par_iter()
                 .filter_map(|row| row.get(col_idx))
-                .map(|cell| strip_ansi(cell).len())
+                .map(|cell| visible_len(cell))
                 .max()
                 .unwrap_or(0);
 
@@ -56,24 +62,30 @@ fn detect_column_properties(rows: &[Vec<String>]) -> (Vec<usize>, Vec<bool>) {
     (widths, is_numeric)
 }
 
-fn format_row(cells: &[String], widths: &[usize], is_numeric: &[bool], sep_width: usize) -> String {
+fn format_row(cells: &[String], widths: &[usize], is_numeric: &[bool], sep_width: usize, ) -> String {
+    // Pre-compute total capacity
+    let total = widths.iter().sum::<usize>()
+        + sep_width * widths.len().saturating_sub(1);
+    let mut out = String::with_capacity(total);
     let spacer = " ".repeat(sep_width);
 
-    widths.iter()
-        .enumerate()
-        .map(|(i, &width)| {
-            let cell = cells.get(i).map_or("", String::as_str);
-            let visual_len = strip_ansi(cell).len();
-            let pad = " ".repeat(width.saturating_sub(visual_len));
+    // Bind a single empty String for all "missing" cells
+    let empty = String::new();
 
-            if is_numeric[i] {
-                format!("{pad}{cell}")  // right-align
-            } else {
-                format!("{cell}{pad}")  // left-align
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(&spacer)
+    // Zip widths, flags, and cells (falling back to &empty)
+    for (&width, &numeric, cell) in izip!(
+        widths.iter(),
+        is_numeric.iter(),
+        cells.iter().chain(repeat(&empty))
+    ) {
+        if numeric { write!(out, "{:>width$}", cell, width = width).unwrap(); }
+        else { write!(out, "{:<width$}", cell, width = width).unwrap(); }
+        out.push_str(&spacer);
+    }
+
+    // Trim off the trailing separator
+    out.truncate(out.len().saturating_sub(sep_width));
+    out
 }
 
 // ——— Core formatting functions ——————————————————————————————————
