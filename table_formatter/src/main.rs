@@ -40,26 +40,21 @@ fn split_row(line: &str) -> Vec<String> {
 fn detect_column_properties(rows: &[Vec<String>]) -> (Vec<usize>, Vec<bool>) {
     let num_cols = rows.iter().map(Vec::len).max().unwrap_or(0);
 
-    // Calculate widths and numeric flags together
-    let (widths, is_numeric): (Vec<_>, Vec<_>) = (0..num_cols)
-        .into_par_iter()
+    // Transpose table: convert rows to columns
+    let mut columns = vec![vec![]; num_cols];
+    for (col_idx, cell) in rows.iter().flat_map(|row| row.iter().enumerate()) {
+        columns[col_idx].push(cell);
+    }
+
+    // Return calculated widths and numeric-flags
+    (0..num_cols).into_par_iter()
         .map(|col_idx| {
-            let width = rows.par_iter()
-                .filter_map(|row| row.get(col_idx))
-                .map(|cell| visible_len(cell))
-                .max()
-                .unwrap_or(0);
-
-            let is_numeric = rows.par_iter()
-                .skip(1) // Skip header
-                .filter_map(|row| row.get(col_idx))
-                .all(|cell| is_numeric_or_neutral(cell));
-
+            let col = &columns[col_idx];
+            let width = col.par_iter().map(|cell| visible_len(cell)).max().unwrap_or(0);
+            let is_numeric = col.par_iter().skip(1).all(|cell| is_numeric_or_neutral(cell));
             (width, is_numeric)
         })
-        .unzip();
-
-    (widths, is_numeric)
+        .unzip()
 }
 
 fn format_row(cells: &[String], widths: &[usize], is_numeric: &[bool], sep_width: usize, ) -> String {

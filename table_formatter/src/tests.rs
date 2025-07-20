@@ -42,6 +42,92 @@ const SMTOUHOU_DATA_ORGANIZED: &[&str] = &[
     "7  Mima         74  494  472  146  166",
 ];
 
+const LONG_TABLE: &[&str] = &[
+    "A  B",
+    " 1      X",
+    "2    X",
+    "3    X",
+    "4     X",
+    "5    X",
+    "6  X",
+    "7    X",
+    "7  X",
+    "8        X",
+    "8      X",
+];
+
+const LONG_TABLE_ORGANIZED: &[&str] = &[
+    "A  B",
+    "1  X",
+    "2  X",
+    "3  X",
+    "4  X",
+    "5  X",
+    "6  X",
+    "7  X",
+    "7  X",
+    "8  X",
+    "8  X",
+];
+
+const WIDE_TABLE: &[&str] = &[
+    "A  B       c  d  e  f  g  h  i  j  k  l  m  n  o  p  q  r  s  t  u  v       w  x  y  z",
+    "A  B  c  d  e  f  g  h  i  j  k  l  m  n       o  p  q  r  s  t  u  v  w  x  y  z",
+    "A  B  c  d  e  f  g  h  i  j       k  l  m  n  o  p  q       r  s  t  u  v  w  x  y  z",
+    "A       B  c  d       e  f  g  h  i  j  k  l  m  n  o  p  q  r  s  t  u       v  w  x  y  z",
+];
+
+const WIDE_TABLE_ORGANIZED: &[&str] = &[
+    "A  B  c  d  e  f  g  h  i  j  k  l  m  n  o  p  q  r  s  t  u  v  w  x  y  z",
+    "A  B  c  d  e  f  g  h  i  j  k  l  m  n  o  p  q  r  s  t  u  v  w  x  y  z",
+    "A  B  c  d  e  f  g  h  i  j  k  l  m  n  o  p  q  r  s  t  u  v  w  x  y  z",
+    "A  B  c  d  e  f  g  h  i  j  k  l  m  n  o  p  q  r  s  t  u  v  w  x  y  z",
+];
+
+const MISSING_LINES: &[&str] = &[
+    "A  B",
+    " 1      X",
+    "2    X",
+    "3    X",
+    "",
+    "5    X",
+    "",
+    "7    X",
+    "7  X",
+    "8        X",
+    "8      X",
+];
+
+const MISSING_LINES_ORGANIZED: &[&str] = &[
+    "A  B",
+    "1  X",
+    "2  X",
+    "3  X",
+    "    ",
+    "5  X",
+    "    ",
+    "7  X",
+    "7  X",
+    "8  X",
+    "8  X",
+];
+
+const SPECIAL_CHARS: &[&str] = &[
+    "A  B",
+    "1  x",
+    "🌎     X",
+    "🇺🇸     X",
+    "3  X",
+];
+
+const SPECIAL_CHARS_ORGANIZED: &[&str] = &[
+    "A   B",
+    "1   x",
+    "🌎   X",
+    "🇺🇸  X",
+    "3   X",
+];
+
 fn to_strings(arr: &[&str]) -> Vec<String> {
     arr.iter().map(|s| s.to_string()).collect()
 }
@@ -50,12 +136,20 @@ fn to_strings(arr: &[&str]) -> Vec<String> {
 fn test_directly() {
     assert_eq!(format_table(&to_strings(SAMPLE_INPUT), DEFAULT_SEPARATOR), to_strings(SAMPLE_OUTPUT));
     assert_eq!(format_table(&to_strings(SMTOUHOU_DATA), DEFAULT_SEPARATOR), to_strings(SMTOUHOU_DATA_ORGANIZED));
+    assert_eq!(format_table(&to_strings(LONG_TABLE), DEFAULT_SEPARATOR), to_strings(LONG_TABLE_ORGANIZED));
+    assert_eq!(format_table(&to_strings(WIDE_TABLE), DEFAULT_SEPARATOR), to_strings(WIDE_TABLE_ORGANIZED));
+    assert_eq!(format_table(&to_strings(MISSING_LINES), DEFAULT_SEPARATOR), to_strings(MISSING_LINES_ORGANIZED));
+    assert_eq!(format_table(&to_strings(SPECIAL_CHARS), DEFAULT_SEPARATOR), to_strings(SPECIAL_CHARS_ORGANIZED));
 }
 
 #[test]
 fn test_solution_unchanging() {
     assert_eq!(format_table(&to_strings(SAMPLE_OUTPUT), DEFAULT_SEPARATOR), to_strings(SAMPLE_OUTPUT));
     assert_eq!(format_table(&to_strings(SMTOUHOU_DATA_ORGANIZED), DEFAULT_SEPARATOR), to_strings(SMTOUHOU_DATA_ORGANIZED));
+    assert_eq!(format_table(&to_strings(LONG_TABLE_ORGANIZED), DEFAULT_SEPARATOR), to_strings(LONG_TABLE_ORGANIZED));
+    assert_eq!(format_table(&to_strings(WIDE_TABLE_ORGANIZED), DEFAULT_SEPARATOR), to_strings(WIDE_TABLE_ORGANIZED));
+    assert_eq!(format_table(&to_strings(MISSING_LINES_ORGANIZED), DEFAULT_SEPARATOR), to_strings(MISSING_LINES_ORGANIZED));
+    assert_eq!(format_table(&to_strings(SPECIAL_CHARS_ORGANIZED), DEFAULT_SEPARATOR), to_strings(SPECIAL_CHARS_ORGANIZED));
 }
 
 #[cfg(feature = "cli_tests")]
