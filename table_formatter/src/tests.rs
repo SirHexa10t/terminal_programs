@@ -1,5 +1,6 @@
 
 use crate::{format_table, strip_ansi, is_numeric_or_neutral, DEFAULT_SEPARATOR};
+use test_case::test_case;
 
 // numerical column needs to align right
 // extra excessive spaces need to be trimmed off
@@ -132,24 +133,24 @@ fn to_strings(arr: &[&str]) -> Vec<String> {
     arr.iter().map(|s| s.to_string()).collect()
 }
 
-#[test]
-fn test_directly() {
-    assert_eq!(format_table(&to_strings(SAMPLE_INPUT), DEFAULT_SEPARATOR), to_strings(SAMPLE_OUTPUT));
-    assert_eq!(format_table(&to_strings(SMTOUHOU_DATA), DEFAULT_SEPARATOR), to_strings(SMTOUHOU_DATA_ORGANIZED));
-    assert_eq!(format_table(&to_strings(LONG_TABLE), DEFAULT_SEPARATOR), to_strings(LONG_TABLE_ORGANIZED));
-    assert_eq!(format_table(&to_strings(WIDE_TABLE), DEFAULT_SEPARATOR), to_strings(WIDE_TABLE_ORGANIZED));
-    assert_eq!(format_table(&to_strings(MISSING_LINES), DEFAULT_SEPARATOR), to_strings(MISSING_LINES_ORGANIZED));
-    assert_eq!(format_table(&to_strings(SPECIAL_CHARS), DEFAULT_SEPARATOR), to_strings(SPECIAL_CHARS_ORGANIZED));
+#[test_case(SAMPLE_INPUT, SAMPLE_OUTPUT)]
+#[test_case(SMTOUHOU_DATA, SMTOUHOU_DATA_ORGANIZED)]
+#[test_case(LONG_TABLE, LONG_TABLE_ORGANIZED)]
+#[test_case(WIDE_TABLE, WIDE_TABLE_ORGANIZED)]
+#[test_case(MISSING_LINES, MISSING_LINES_ORGANIZED)]
+#[test_case(SPECIAL_CHARS, SPECIAL_CHARS_ORGANIZED)]
+fn test_directly(input: &[&str], expected: &[&str]) {    
+    assert_eq!(format_table(&to_strings(input), DEFAULT_SEPARATOR), to_strings(expected));
 }
 
-#[test]
-fn test_solution_unchanging() {
-    assert_eq!(format_table(&to_strings(SAMPLE_OUTPUT), DEFAULT_SEPARATOR), to_strings(SAMPLE_OUTPUT));
-    assert_eq!(format_table(&to_strings(SMTOUHOU_DATA_ORGANIZED), DEFAULT_SEPARATOR), to_strings(SMTOUHOU_DATA_ORGANIZED));
-    assert_eq!(format_table(&to_strings(LONG_TABLE_ORGANIZED), DEFAULT_SEPARATOR), to_strings(LONG_TABLE_ORGANIZED));
-    assert_eq!(format_table(&to_strings(WIDE_TABLE_ORGANIZED), DEFAULT_SEPARATOR), to_strings(WIDE_TABLE_ORGANIZED));
-    assert_eq!(format_table(&to_strings(MISSING_LINES_ORGANIZED), DEFAULT_SEPARATOR), to_strings(MISSING_LINES_ORGANIZED));
-    assert_eq!(format_table(&to_strings(SPECIAL_CHARS_ORGANIZED), DEFAULT_SEPARATOR), to_strings(SPECIAL_CHARS_ORGANIZED));
+#[test_case(SAMPLE_OUTPUT)]
+#[test_case(SMTOUHOU_DATA_ORGANIZED)]
+#[test_case(LONG_TABLE_ORGANIZED)]
+#[test_case(WIDE_TABLE_ORGANIZED)]
+#[test_case(MISSING_LINES_ORGANIZED)]
+#[test_case(SPECIAL_CHARS_ORGANIZED)]
+fn test_solution_unchanging(input: &[&str]) {
+    assert_eq!(format_table(&to_strings(input), DEFAULT_SEPARATOR), to_strings(input));
 }
 
 #[cfg(feature = "cli_tests")]
