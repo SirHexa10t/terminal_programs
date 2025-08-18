@@ -1,10 +1,9 @@
 
 [package]
 name = "table_formatter"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 description = "Align whitespace-delimited columns into a neat table"
-authors = ["Your Name <your.email@example.com>"]
 
 [dependencies]
 clap = { version = "4.5.41", features = ["derive"] }

@@ -105,7 +105,7 @@ fn print_table(lines: &[String], separator: usize) {
 #[derive(Parser)]
 #[command(author, version, about = "Align whitespace-delimited columns into a neat table")]
 struct Args {
-    /// Input file path (or use stdin if not provided)
+    /// Input file path / data (or use stdin if not provided)
     #[arg(default_value = "-")]
     input: String,
 
@@ -120,6 +120,9 @@ fn main() -> io::Result<()> {
 
     let lines: Vec<String> = if args.input == "-" {
         io::stdin().lock().lines().collect::<Result<_, _>>()?
+    } else if args.input.contains('\n') {
+        // multiline string provided directly → treat as raw data rather than filepath
+        args.input.lines().map(|s| s.to_string()).collect()
     } else {
         BufReader::new(File::open(&args.input)?).lines().collect::<Result<_, _>>()?
     };

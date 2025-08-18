@@ -1,4 +1,3 @@
-
 use crate::{format_table, strip_ansi, is_numeric_or_neutral, DEFAULT_SEPARATOR};
 use test_case::test_case;
 
@@ -85,6 +84,26 @@ const WIDE_TABLE_ORGANIZED: &[&str] = &[
     "A  B  c  d  e  f  g  h  i  j  k  l  m  n  o  p  q  r  s  t  u  v  w  x  y  z",
 ];
 
+const VARYING_LENGTH_TABLE: &[&str] = &[
+    "A            1  c  d  e       f  g ",
+    "B       2",
+    "C  4  c  d  e  f  g ",
+    "D  3       c",
+    "E       5  c  d  e  f  g ",
+    "F  6",
+    "G  7       c  d       e  f       g ",
+];
+
+const VARYING_LENGTH_TABLE_ORGANIZED: &[&str] = &[
+    "A  1  c  d  e  f  g",
+    "B  2               ",
+    "C  4  c  d  e  f  g",
+    "D  3  c            ",
+    "E  5  c  d  e  f  g",
+    "F  6               ",
+    "G  7  c  d  e  f  g",
+];
+
 const MISSING_LINES: &[&str] = &[
     "A  B",
     " 1      X",
@@ -137,6 +156,7 @@ fn to_strings(arr: &[&str]) -> Vec<String> {
 #[test_case(SMTOUHOU_DATA, SMTOUHOU_DATA_ORGANIZED)]
 #[test_case(LONG_TABLE, LONG_TABLE_ORGANIZED)]
 #[test_case(WIDE_TABLE, WIDE_TABLE_ORGANIZED)]
+#[test_case(VARYING_LENGTH_TABLE, VARYING_LENGTH_TABLE_ORGANIZED)]
 #[test_case(MISSING_LINES, MISSING_LINES_ORGANIZED)]
 #[test_case(SPECIAL_CHARS, SPECIAL_CHARS_ORGANIZED)]
 fn test_directly(input: &[&str], expected: &[&str]) {    
@@ -147,11 +167,68 @@ fn test_directly(input: &[&str], expected: &[&str]) {
 #[test_case(SMTOUHOU_DATA_ORGANIZED)]
 #[test_case(LONG_TABLE_ORGANIZED)]
 #[test_case(WIDE_TABLE_ORGANIZED)]
+#[test_case(VARYING_LENGTH_TABLE_ORGANIZED)]
 #[test_case(MISSING_LINES_ORGANIZED)]
 #[test_case(SPECIAL_CHARS_ORGANIZED)]
 fn test_solution_unchanging(input: &[&str]) {
     assert_eq!(format_table(&to_strings(input), DEFAULT_SEPARATOR), to_strings(input));
 }
+
+fn run_with_file(file: &str) -> String {
+    use assert_cmd::Command;
+
+    match Command::cargo_bin("table_formatter") {
+        Ok(_) => println!("Binary found ✅"),
+        Err(e) => panic!("Binary not found ❌: {:?}", e),
+    }
+
+    let output = Command::cargo_bin("table_formatter").unwrap()
+        .arg(file)
+        .output()
+        .expect("failed to execute process");
+
+    assert!(output.status.success(), "program exited with error");
+    String::from_utf8(output.stdout).expect("not UTF-8")
+}
+
+#[test_case(SAMPLE_INPUT, SAMPLE_OUTPUT)]
+fn test_file_input(input: &[&str], expected: &[&str]) {
+    use tempfile::NamedTempFile;
+    use std::fs;
+
+
+    let temp_file = NamedTempFile::new().unwrap();
+    fs::write(&temp_file, input.join("\n")).unwrap();
+
+    let result = run_with_file(temp_file.path().to_str().unwrap());
+
+    assert_eq!(result, expected.join("\n"));
+}
+
+#[test_case("testing/edf4.1_ranger_testfile.csv")]
+fn test_with_large_file(input_file: &str) {  // covers test for symbols that take a different number of chars than displayed
+    let result = run_with_file(input_file);
+
+    // Example assertion (you can customize)
+    assert!(!result.is_empty());
+    assert!(
+            result.contains("Type           LV  LV                                 DPS   RDPS     DPM  Ammo  \"Rate of Fire (fire/sec)\"  Damage  \"Reload (sec)\"  \"Range (m)\"  Accuracy                    Zoom  Lock time  -    -        time per mag"),
+            "Header line missing or messed-up"
+        );
+        assert!(
+            result.contains("Sniper         72  Nova Buster ZD                   80000  80000   80000     1                          1   80000               0         1240  S+                          5x            -  -    -                   1"),
+            "Line below header missing or messed-up"
+        );
+        assert!(
+            result.contains("GrenL          37  Splash Grenade α                 20000   2857   20000     1                          1   20000               6           10  Timed / 10sec               -             -  -    -                   7"),
+            "Line with 2-char symbol missing or messed-up"
+        );
+        assert!(
+            result.contains("Sniper          0  MMF40                               77     60     550     5                        0.7     110               2          600  S+                          4x            -  -    -         9.142857143"),
+            "Arbitrary late line missing or messed-up"
+        );
+}
+
 
 #[cfg(feature = "cli_tests")]
 mod cli_tests {
@@ -161,50 +238,7 @@ mod cli_tests {
     use tempfile::NamedTempFile;
     use std::path::PathBuf;
 
-    #[test]
-    fn test_file_input() {
-        let temp_file = NamedTempFile::new().unwrap();
-        fs::write(&temp_file, SAMPLE_INPUT.join("\n")).unwrap();
 
-        Command::cargo_bin("table_formatter").unwrap()
-            .arg(temp_file.path())
-            .assert()
-            .success()
-            .stdout(format!("{}\n", SAMPLE_OUTPUT.join("\n")));
-    }
-
-    // covers test for symbols that take a different number of chars than displayed
-    #[test]
-    fn test_large_file_input() {
-        let test_file_path = PathBuf::from("testing/edf4.1_ranger_testfile.csv");
-
-        let output = Command::cargo_bin("table_formatter").unwrap()
-            .arg(&test_file_path)
-            .assert()
-            .success()
-            .get_output()
-            .stdout
-            .clone();
-
-        let stdout = String::from_utf8_lossy(&output);
-
-        assert!(
-            stdout.contains("Type           LV  LV                                 DPS   RDPS     DPM  Ammo  \"Rate of Fire (fire/sec)\"  Damage  \"Reload (sec)\"  \"Range (m)\"  Accuracy                    Zoom  Lock time  -    -        time per mag"),
-            "Header line missing or messed-up"
-        );
-        assert!(
-            stdout.contains("Sniper         72  Nova Buster ZD                   80000  80000   80000     1                          1   80000               0         1240  S+                          5x            -  -    -                   1"),
-            "Line below header missing or messed-up"
-        );
-        assert!(
-            stdout.contains("GrenL          37  Splash Grenade α                 20000   2857   20000     1                          1   20000               6           10  Timed / 10sec               -             -  -    -                   7"),
-            "Line with 2-char symbol missing or messed-up"
-        );
-        assert!(
-            stdout.contains("Sniper          0  MMF40                               77     60     550     5                        0.7     110               2          600  S+                          4x            -  -    -         9.142857143"),
-            "Arbitrary late line missing or messed-up"
-        );
-    }
 
     #[test]
     fn test_piped_input() {
