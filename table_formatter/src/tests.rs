@@ -1,3 +1,5 @@
+use std::fs::File;
+use assert_cmd::Command;
 use crate::{format_table, strip_ansi, is_numeric_or_neutral, DEFAULT_SEPARATOR};
 use test_case::test_case;
 
@@ -86,23 +88,24 @@ const WIDE_TABLE_ORGANIZED: &[&str] = &[
 
 const VARYING_LENGTH_TABLE: &[&str] = &[
     "A            1  c  d  e       f  g ",
-    "B       2",
+    "B       8",
     "C  4  c  d  e  f  g ",
     "D  3       c",
     "E       5  c  d  e  f  g ",
-    "F  6",
+    "H  6",
     "G  7       c  d       e  f       g ",
 ];
 
 const VARYING_LENGTH_TABLE_ORGANIZED: &[&str] = &[
     "A  1  c  d  e  f  g",
-    "B  2               ",
+    "B  8               ",
     "C  4  c  d  e  f  g",
     "D  3  c            ",
     "E  5  c  d  e  f  g",
-    "F  6               ",
+    "H  6               ",
     "G  7  c  d  e  f  g",
 ];
+
 
 const MISSING_LINES: &[&str] = &[
     "A  B",
@@ -152,6 +155,66 @@ fn to_strings(arr: &[&str]) -> Vec<String> {
     arr.iter().map(|s| s.to_string()).collect()
 }
 
+fn assert_cmd_and_print(command: &mut Command) -> Vec<String> {
+    let output = command.output()
+        .expect("failed to execute process");
+
+    assert!(
+        output.status.success(),
+        "program exited with error: {}\n--- stderr ---\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(String::from)
+        .collect::<Vec<_>>()
+}
+
+fn run_with_cmdline_arg(arg: &str) -> Vec<String> {
+    assert_cmd_and_print(
+        Command::cargo_bin("table_formatter").unwrap()
+            .arg(arg)
+    )
+}
+
+fn run_with_piped_data(piped: &str) -> Vec<String> {
+    assert_cmd_and_print(
+        Command::cargo_bin("table_formatter").unwrap()
+            .write_stdin(piped)
+    )
+}
+fn direct_test(input: &[&str], expected: &[&str]) {  // call the actual function directly
+    assert_eq!(format_table(&to_strings(input), DEFAULT_SEPARATOR, None), to_strings(expected));
+}
+
+fn file_input_test(input: &[&str], expected: &[&str]) {  // run the program through its bin-file and provide a temp-file
+    use tempfile::NamedTempFile;
+    use std::fs;
+
+    let temp_file = NamedTempFile::new().unwrap();
+    fs::write(&temp_file, input.join("\n")).unwrap();
+
+    let result = run_with_cmdline_arg(temp_file.path().to_str().unwrap());
+
+    assert_eq!(result, to_strings(expected));
+}
+
+fn string_input_test(input: &[&str], expected: &[&str]) {
+    let result = run_with_cmdline_arg(&input.join("\n"));
+    assert_eq!(result, to_strings(expected));
+}
+
+fn piped_input_test(input: &[&str], expected: &[&str]) {
+    let result = run_with_piped_data(&input.join("\n"));
+    assert_eq!(result, to_strings(expected));
+}
+
+fn check_immutability_on_2nd_run(input: &[&str]) {  // input is a pre-organized table. There's nothing to further organize.
+    assert_eq!(format_table(&to_strings(input), DEFAULT_SEPARATOR, None), to_strings(input));
+}
+
 #[test_case(SAMPLE_INPUT, SAMPLE_OUTPUT)]
 #[test_case(SMTOUHOU_DATA, SMTOUHOU_DATA_ORGANIZED)]
 #[test_case(LONG_TABLE, LONG_TABLE_ORGANIZED)]
@@ -159,95 +222,111 @@ fn to_strings(arr: &[&str]) -> Vec<String> {
 #[test_case(VARYING_LENGTH_TABLE, VARYING_LENGTH_TABLE_ORGANIZED)]
 #[test_case(MISSING_LINES, MISSING_LINES_ORGANIZED)]
 #[test_case(SPECIAL_CHARS, SPECIAL_CHARS_ORGANIZED)]
-fn test_directly(input: &[&str], expected: &[&str]) {    
-    assert_eq!(format_table(&to_strings(input), DEFAULT_SEPARATOR), to_strings(expected));
+fn test_sets(input: &[&str], expected: &[&str]) {
+    direct_test(input, expected);
+    file_input_test(input, expected);
+    string_input_test(input, expected);
+    piped_input_test(input, expected);
+    check_immutability_on_2nd_run(expected);
 }
 
-#[test_case(SAMPLE_OUTPUT)]
-#[test_case(SMTOUHOU_DATA_ORGANIZED)]
-#[test_case(LONG_TABLE_ORGANIZED)]
-#[test_case(WIDE_TABLE_ORGANIZED)]
-#[test_case(VARYING_LENGTH_TABLE_ORGANIZED)]
-#[test_case(MISSING_LINES_ORGANIZED)]
-#[test_case(SPECIAL_CHARS_ORGANIZED)]
-fn test_solution_unchanging(input: &[&str]) {
-    assert_eq!(format_table(&to_strings(input), DEFAULT_SEPARATOR), to_strings(input));
-}
 
-fn run_with_file(file: &str) -> String {
-    use assert_cmd::Command;
-
-    match Command::cargo_bin("table_formatter") {
-        Ok(_) => println!("Binary found ✅"),
-        Err(e) => panic!("Binary not found ❌: {:?}", e),
-    }
-
-    let output = Command::cargo_bin("table_formatter").unwrap()
-        .arg(file)
-        .output()
-        .expect("failed to execute process");
-
-    assert!(output.status.success(), "program exited with error");
-    String::from_utf8(output.stdout).expect("not UTF-8")
-}
-
-#[test_case(SAMPLE_INPUT, SAMPLE_OUTPUT)]
-fn test_file_input(input: &[&str], expected: &[&str]) {
-    use tempfile::NamedTempFile;
-    use std::fs;
-
-
-    let temp_file = NamedTempFile::new().unwrap();
-    fs::write(&temp_file, input.join("\n")).unwrap();
-
-    let result = run_with_file(temp_file.path().to_str().unwrap());
-
-    assert_eq!(result, expected.join("\n"));
-}
 
 #[test_case("testing/edf4.1_ranger_testfile.csv")]
 fn test_with_large_file(input_file: &str) {  // covers test for symbols that take a different number of chars than displayed
-    let result = run_with_file(input_file);
+    let result = run_with_cmdline_arg(input_file);
 
-    // Example assertion (you can customize)
+    let containment_checks = vec![
+        ("Type           LV  LV                                 DPS   RDPS     DPM  Ammo  \"Rate of Fire (fire/sec)\"  Damage  \"Reload (sec)\"  \"Range (m)\"  Accuracy                    Zoom  Lock time  -    -        time per mag", "Header line missing or messed-up"),
+        ("Sniper         72  Nova Buster ZD                   80000  80000   80000     1                          1   80000               0         1240  S+                          5x            -  -    -                   1", "Line below header missing or messed-up"),
+        ("GrenL          37  Splash Grenade α                 20000   2857   20000     1                          1   20000               6           10  Timed / 10sec               -             -  -    -                   7", "Line with 2-char symbol missing or messed-up"),
+        ("Sniper          0  MMF40                               77     60     550     5                        0.7     110               2          600  S+                          4x            -  -    -         9.142857143", "Arbitrary late line missing or messed-up"),
+    ];
+
     assert!(!result.is_empty());
-    assert!(
-            result.contains("Type           LV  LV                                 DPS   RDPS     DPM  Ammo  \"Rate of Fire (fire/sec)\"  Damage  \"Reload (sec)\"  \"Range (m)\"  Accuracy                    Zoom  Lock time  -    -        time per mag"),
-            "Header line missing or messed-up"
-        );
-        assert!(
-            result.contains("Sniper         72  Nova Buster ZD                   80000  80000   80000     1                          1   80000               0         1240  S+                          5x            -  -    -                   1"),
-            "Line below header missing or messed-up"
-        );
-        assert!(
-            result.contains("GrenL          37  Splash Grenade α                 20000   2857   20000     1                          1   20000               6           10  Timed / 10sec               -             -  -    -                   7"),
-            "Line with 2-char symbol missing or messed-up"
-        );
-        assert!(
-            result.contains("Sniper          0  MMF40                               77     60     550     5                        0.7     110               2          600  S+                          4x            -  -    -         9.142857143"),
-            "Arbitrary late line missing or messed-up"
-        );
+    for (expected, errmsg) in containment_checks {
+        assert!(result.contains(&expected.to_string()), "{}", errmsg);
+    }
 }
 
+#[test_case("testing/non_utf8.txt")]
+fn test_with_non_utf8_chars(input_file: &str) {
+    use std::io::{BufReader, Read};
 
-#[cfg(feature = "cli_tests")]
-mod cli_tests {
-    use super::*;
-    use assert_cmd::Command;
-    use std::fs;
-    use tempfile::NamedTempFile;
-    use std::path::PathBuf;
+    let result = run_with_cmdline_arg(input_file);
+
+    // Read raw bytes (no UTF-8 assumption)
+    let mut buf = Vec::new();
+    BufReader::new(File::open(input_file).unwrap())
+        .read_to_end(&mut buf)
+        .unwrap();
+
+    // Convert lossy so we can compare line-wise
+    let file_contents: Vec<String> = String::from_utf8_lossy(&buf)
+        .lines()
+        .map(|s| s.to_string())
+        .collect();
+
+    assert_eq!(result, file_contents);  // see that the output doesn't alter the data (even if it can't be displayed right)
+}
+
+#[test]
+fn test_sorting() {
+    const VARYING_LENGTH_TABLE_SORT0_ORGANIZED: &[&str] = &[
+        "A  1  c  d  e  f  g",
+        "B  8               ",
+        "C  4  c  d  e  f  g",
+        "D  3  c            ",
+        "E  5  c  d  e  f  g",
+        "G  7  c  d  e  f  g",
+        "H  6               ",
+    ];
+
+    const VARYING_LENGTH_TABLE_SORT1_ORGANIZED: &[&str] = &[
+        "B  8               ",
+        "G  7  c  d  e  f  g",
+        "H  6               ",
+        "E  5  c  d  e  f  g",
+        "C  4  c  d  e  f  g",
+        "D  3  c            ",
+        "A  1  c  d  e  f  g",
+    ];
+
+    assert_eq!(format_table(&to_strings(VARYING_LENGTH_TABLE), DEFAULT_SEPARATOR, Some(0)), to_strings(VARYING_LENGTH_TABLE_SORT0_ORGANIZED));
+    assert_eq!(format_table(&to_strings(VARYING_LENGTH_TABLE), DEFAULT_SEPARATOR, Some(1)), to_strings(VARYING_LENGTH_TABLE_SORT1_ORGANIZED));
 
 
+    const SORT_TESTER: &[&str] = &[
+        "X     X     X",
+        "2  1000    2M",
+        "3     9  3.5K",
+        "4     5    9G",
+        "5     6    3G",
+        "6     8   10T",
+        "7     9  288M",
+    ];
+    const SORT_TESTER_SORT1: &[&str] = &[
+        "X     X     X",
+        "2  1000    2M",
+        "7     9  288M",
+        "3     9  3.5K",
+        "6     8   10T",
+        "5     6    3G",
+        "4     5    9G",
+    ];
+    const SORT_TESTER_SORT2: &[&str] = &[
+        "X     X     X",
+        "6     8   10T",
+        "4     5    9G",
+        "5     6    3G",
+        "7     9  288M",
+        "2  1000    2M",
+        "3     9  3.5K",
+    ];
 
-    #[test]
-    fn test_piped_input() {
-        Command::cargo_bin("table_formatter").unwrap()
-            .write_stdin(SAMPLE_INPUT.join("\n"))
-            .assert()
-            .success()
-            .stdout(format!("{}\n", SAMPLE_OUTPUT.join("\n")));
-    }
+    assert_eq!(format_table(&to_strings(SORT_TESTER), DEFAULT_SEPARATOR, Some(1)), to_strings(SORT_TESTER_SORT1));
+    assert_eq!(format_table(&to_strings(SORT_TESTER), DEFAULT_SEPARATOR, Some(2)), to_strings(SORT_TESTER_SORT2));
+
 }
 
 #[test]
