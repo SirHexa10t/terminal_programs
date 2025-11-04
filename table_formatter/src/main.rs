@@ -31,7 +31,7 @@ pub fn visible_len(text: &str) -> usize {
 pub fn is_numeric_or_neutral(text: &str) -> bool {
     let clean = strip_ansi(text);
     let clean = clean.trim();
-    matches!(clean, "" | "-" | "--" | "---" | "*" | "−" | "=" | "y" | "n")
+    matches!(clean, "" | "-" | "--" | "---" | "*" | "−" | "=" | "y" | "n" | "?")
         || NUMERIC_PATTERN.is_match(clean)
 }
 
