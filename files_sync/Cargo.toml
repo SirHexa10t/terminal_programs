@@ -1,0 +1,13 @@
+
+[package]
+name = "files_sync"
+version = "1.0.0"
+edition = "2021"
+description = "Sync dir contents in an orderly manner"
+
+[dependencies]
+blake3 = "1.8.2"
+test-case = "3.3.1"
+
+[dev-dependencies]
+test-case = "3.3.1"
