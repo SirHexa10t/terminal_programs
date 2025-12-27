@@ -8,6 +8,7 @@ description = "Sync dir contents in an orderly manner"
 [dependencies]
 blake3 = "1.8.2"
 test-case = "3.3.1"
+walkdir = "2.5.0"
 
 [dev-dependencies]
 test-case = "3.3.1"

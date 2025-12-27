@@ -1,8 +1,9 @@
-use crate::write_tracking_file;
+use crate::{write_tracking_file, write_tracking_file_with_listing, TRACKING_FILENAME};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::os::unix::fs as unix_fs;  // we're supporting unix filesystem features such as symlinks
+use std::process::Command;
 
 
 use test_case::test_case;
@@ -28,17 +29,30 @@ fn expand_home(s: &str) -> PathBuf {
 
 #[test]
 fn tracking_file_is_not_empty_after_mapping_fixture() {
-    // Arrange: create the fixture under ./testing (project dir).
     creates_complicated_testing_scenario_in_project_dir();
 
-    // Act: write the tracking file into ./testing.
     let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let tracking_path = write_tracking_file(project_root.join("testing"));
+    let testing_dir = project_root.join("testing");
+    let tracking_path = write_tracking_file_with_listing(&testing_dir);
 
-    // Assert: line count is not zero
+    // Count non-empty lines in the external baseline output.
     let content = std::fs::read_to_string(&tracking_path).unwrap();
-    let line_count = content.lines().count();
-    assert_ne!(line_count, 0, "tracking file should not be empty");
+    let baseline_out = find_escaped_output(&testing_dir);
+
+    fn filtered_line_count(s: &str) -> usize {
+        s.lines()
+            .map(str::trim_end)
+            .filter(|l| !l.is_empty())
+            .filter(|l| !l.contains(TRACKING_FILENAME))
+            .count()
+    }
+
+    // Count non-empty lines in the external baseline output.
+    let line_count = filtered_line_count(&content);
+    let baseline_count = filtered_line_count(&baseline_out);
+
+    assert_eq!(line_count, baseline_count,
+               "tracking file line count mismatch: tracking={}, baseline={}", line_count, baseline_count);
 }
 
 
@@ -52,7 +66,7 @@ fn creates_complicated_testing_scenario_in_project_dir() {
     create_entry(&project_root, "./testing/f1/b.txt", b"hello world");
 
     create_entry(&project_root, "./testing/f2/a.txt", b"another a");
-    create_entry(&project_root, "./testing/f2/with space", b"space");
+    create_entry(&project_root, "./testing/f2/ with space", b"space");
     create_entry(&project_root, "./testing/f2/special!@#$%^&*()-+`\"\'", b"specials");
     create_entry(&project_root, "./testing/f2/with\nnewline", b"newline");
 
@@ -109,4 +123,33 @@ fn create_symlink(root: &Path, link_rel: &str, target: &str) -> PathBuf {
 
     unix_fs::symlink(target, &link_path).unwrap();
     link_path
+}
+
+
+
+/// Runs:
+///   find . -mindepth 1 -printf '%p\0' | xargs -0 -n1 printf '%q\n' | sort
+///
+/// Notes:
+/// - Uses `sh -lc` because of the pipe.
+fn find_escaped_output(dir: &std::path::Path) -> String {
+
+    let cmd = r"find . -mindepth 1 -printf '%p\0' | xargs -0 -n1 printf '%q\n' | sort";
+    let out = Command::new("sh")
+        .arg("-lc")
+        .arg(cmd)
+        .current_dir(dir)
+        .output()
+        .unwrap_or_else(|e| panic!("failed to run shell command in '{}': {}", dir.display(), e));
+
+    if !out.status.success() {
+        panic!(
+            "command failed in '{}': exit={:?}, stderr={}",
+            dir.display(),
+            out.status.code(),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    String::from_utf8(out.stdout).unwrap_or_else(|e| panic!("baseline stdout not UTF-8: {}", e))
 }
