@@ -4,6 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::os::unix::fs as unix_fs;  // we're supporting unix filesystem features such as symlinks
 use std::process::Command;
+use rayon::prelude::*;
 
 
 use test_case::test_case;
@@ -28,28 +29,15 @@ fn expand_home(s: &str) -> PathBuf {
 
 
 #[test]
-fn tracking_file_contains_the_right_amount_of_entries() {
+fn tracking_file_compare_with_external_command() {
     let dir_a = creates_complicated_testing_tree("A");
     let dir_a_tracker = write_tracking_file_with_listing(&dir_a);
 
-    let content = std::fs::read_to_string(&dir_a_tracker).unwrap();
+    let tracker_content = path_keys_from_tracking_file(&dir_a_tracker);
     let baseline_out = find_escaped_output(&dir_a);
 
-    /// Count non-empty non-tracker-file lines in the external baseline output.
-    fn filtered_line_count(s: &str) -> usize {
-        s.lines()
-            .map(str::trim_end)
-            .filter(|l| !l.is_empty())
-            .filter(|l| *l != TRACKING_FILENAME)
-            .count()
-    }
-
-    // Count non-empty lines in the external baseline output.
-    let line_count = filtered_line_count(&content);
-    let baseline_count = filtered_line_count(&baseline_out);
-
-    assert_eq!(line_count, baseline_count,
-               "tracking file line count mismatch: tracking={}, baseline={}", line_count, baseline_count);
+    assert_eq!(tracker_content, baseline_out,
+               "tracking file line count mismatch: tracking={}, baseline={}", tracker_content.join("\n"), baseline_out.join("\n"));
 }
 
 
@@ -59,33 +47,35 @@ fn creates_complicated_testing_tree(subdir: &str) -> PathBuf {
 
     let _ = fs::remove_dir_all(&root);
 
+    // simple
     create_entry(&root, "f1/a.txt", b"");
     create_entry(&root, "f1/b.txt", b"hello world");
 
+    // problematic chars
     create_entry(&root, "f2/a.txt", b"another a");
     create_entry(&root, "f2/ with space", b"space");
     create_entry(&root, "f2/special!@#$%^&*()-+`\"\'", b"specials");
     create_entry(&root, "f2/with\nnewline", b"newline");
-
-    create_entry(&root, "f3/inner1", b"");
-    create_entry(&root, "f3/f4/inner2", b"");
-
-    create_entry(&root, "f2/.hidden", b"hidden");
     create_entry(&root, "f2/with\ttab", b"tab");
     create_entry(&root, "f2/unicode_ハンバーガー_🍣", b"unicode");
+
+    // hierarchy/hidden
+    create_entry(&root, "f3/inner1", b"");
+    create_entry(&root, "f3/f4/inner2", b"inner2");
+    create_entry(&root, "f3/.hidden", b"hidden");
+
+    // empty
     create_entry(&root, "empty_dir/", b"");
 
-    create_entry(&root, "f4/inner2", b"another inner2");
+    // extra instances
+    create_entry(&root, "f4/inner2", b"another inner2");  // "duplicate" file
+    create_entry(&root, &format!("f4/{}", TRACKING_FILENAME), b"another inner2");  // "duplicate" file
 
-    // Symlinks (created as working relative symlinks)
-    // f5/sl1 -> f1/b.txt
+    // links
     create_symlink(&root, "f5/sl1", "../f1/b.txt");
-    // f5/sl2 -> f5/sl1
-    create_symlink(&root, "f5/sl2", "sl1");
-    // f5/f6/sl3 -> f5/
-    create_symlink(&root, "f5/f6/sl3", "../..");
-    // link outside of project
-    create_symlink(&root, "f5/f6/sl4", expand_home("$HOME/Downloads").to_str().unwrap());
+    create_symlink(&root, "f5/sl2", "sl1");  // f5/sl2 -> f5/sl1
+    create_symlink(&root, "f5/f6/sl3", "../..");  // f5/f6/sl3 -> f5/
+    create_symlink(&root, "f5/f6/sl4", expand_home("$HOME/Downloads").to_str().unwrap());  // link outside of project
 
     root
 }
@@ -127,28 +117,44 @@ fn create_symlink(root: &Path, link_rel: &str, target: &str) -> PathBuf {
 
 
 /// Runs:
-///   find . -mindepth 1 -printf '%P\0' | xargs -0 -n1 printf '%q\n' | sort
+///   find . -mindepth 1 -printf '%P\0'
+/// Then escapes the output and sorts it.
 ///
 /// Notes:
 /// - Uses `sh -lc` because of the pipe.
-fn find_escaped_output(dir: &std::path::Path) -> String {
-
-    let cmd = r"find . -mindepth 1 -printf '%P\0' | xargs -0 -n1 printf '%q\n' | sort";
+fn find_escaped_output(dir: &std::path::Path) -> Vec<String> {
+    // run "find" command
     let out = Command::new("sh")
         .arg("-lc")
-        .arg(cmd)
+        .arg(r"find . -mindepth 1 -printf '%P\0'")
         .current_dir(dir)
         .output()
         .unwrap_or_else(|e| panic!("failed to run shell command in '{}': {}", dir.display(), e));
 
-    if !out.status.success() {
-        panic!(
-            "command failed in '{}': exit={:?}, stderr={}",
-            dir.display(),
-            out.status.code(),
-            String::from_utf8_lossy(&out.stderr)
-        );
-    }
+    // check that return code was 0, and process/collect the data
+    let mut lines: Vec<String> = match out.status.success() {
+        false => panic!("find failed in '{}': exit={:?}, stderr={}", dir.display(), out.status.code(), String::from_utf8_lossy(&out.stderr)),
+        true => out.stdout.par_split(|&b| b == 0)  // split stdout on \0
+            .filter(|s| !s.is_empty())  // sanitize
+            .filter(|s| *s != TRACKING_FILENAME.as_bytes())  // sanitize
+            .map(|s| String::from_utf8_lossy(s).into_owned())
+            .collect()
+    };
 
-    String::from_utf8(out.stdout).unwrap_or_else(|e| panic!("baseline stdout not UTF-8: {}", e))
+    lines.par_sort_unstable();  // no need to preserve equals' order; run it a bit faster
+    lines
 }
+
+// Tracking file -> sorted Vec<String> of path_keys
+fn path_keys_from_tracking_file(tracking_file: &std::path::Path) -> Vec<String> {
+    let mut content: Vec<String> = std::fs::read_to_string(tracking_file)
+        .unwrap_or_else(|e| panic!("failed to read '{}': {}", tracking_file.display(), e))
+        .par_lines()
+        .filter(|l| !l.is_empty())
+        .map(|line| crate::ManifestEntry::deserialize_line(line).path_key().to_owned())
+        .collect();
+
+    content.par_sort_unstable();
+    content
+}
+

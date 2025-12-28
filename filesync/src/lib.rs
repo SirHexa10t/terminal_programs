@@ -1,10 +1,17 @@
 #[cfg(test)]
 mod tests;
+mod structures;
+
+#[cfg(unix)]
+use crate::structures::ManifestEntry;
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 use std::io::{Write, BufWriter};
+
+
+
 
 pub const TRACKING_FILENAME: &str = "filesync_tracking.txt";
 
@@ -33,42 +40,36 @@ pub fn write_tracking_file(dir: impl AsRef<Path>) -> PathBuf {
     file_path
 }
 
-
-fn list_tree_paths(dir: &Path) -> Vec<PathBuf> {
-    let mut out: Vec<PathBuf> = WalkDir::new(dir)
-        .follow_links(false)
-        .into_iter()
-        .filter_map(|e| e.ok())          // ignore traversal errors for now
-        .filter(|e| e.depth() != 0)      // exclude root itself
-        .map(|e| e.path().strip_prefix(dir).unwrap().to_path_buf())
+fn list_track_entries(root: &Path) -> Vec<ManifestEntry> {
+    let mut out: Vec<ManifestEntry> = WalkDir::new(root).follow_links(false).into_iter()
+        .filter_map(|e| e.ok())  // ignore traversal errors for now
+        .filter(|e| e.depth() != 0)  // exclude root itself)
+        .map(|e| e.path().strip_prefix(root).unwrap().to_path_buf())
+        .filter(|rel| rel.as_os_str() != TRACKING_FILENAME)
+        .map(|rel| ManifestEntry::from_rel_path(root, rel))
         .collect();
 
-    // deterministic ordering (Linux): compare raw bytes of the OsStr
-    out.sort();
+    out.sort_by(|a, b| a.path_key().cmp(b.path_key()));
     out
 }
+
+
+
+
 
 pub fn write_tracking_file_with_listing(dir: impl AsRef<Path>) -> PathBuf {
     let dir = dir.as_ref();
     let tracking_path = write_tracking_file(dir);
 
-    // build listing
-    let mut paths = list_tree_paths(dir);
-    paths.retain(|p| p.as_os_str() != TRACKING_FILENAME);  // exclude the tracking file itself
+    let entries = list_track_entries(dir);
 
-    // write one relative path per line (lossy display; fine for now)
     let file = fs::File::create(&tracking_path)
         .unwrap_or_else(|e| panic!("failed to create '{}': {}", tracking_path.display(), e));
     let mut w = BufWriter::new(file);
 
-    fn escape_tracking(s: &str) -> String {
-        s.chars().flat_map(|c| c.escape_default()).collect()
-    }
-    
-    for p in paths {
-        let escaped = escape_tracking(&p.to_string_lossy());
-        writeln!(w, "{}", escaped)
-            .unwrap_or_else(|e| panic!("failed to write to '{}': {}", tracking_path.display(), e));
+    for e in entries {
+        writeln!(w, "{}", e.serialize_line())
+            .unwrap_or_else(|err| panic!("failed to write to '{}': {}", tracking_path.display(), err));
     }
 
     tracking_path
