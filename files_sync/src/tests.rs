@@ -28,7 +28,7 @@ fn expand_home(s: &str) -> PathBuf {
 
 
 #[test]
-fn tracking_file_is_not_empty_after_mapping_fixture() {
+fn tracking_file_contains_the_right_amount_of_entries() {
     creates_complicated_testing_scenario_in_project_dir();
 
     let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -87,6 +87,7 @@ fn creates_complicated_testing_scenario_in_project_dir() {
     create_symlink(&project_root, "./testing/f5/sl2", "sl1");
     // ./testing/f5/f6/sl3 -> ./testing/f5/
     create_symlink(&project_root, "./testing/f5/f6/sl3", "../..");
+    create_symlink(&project_root, "./testing/f5/f6/sl4", expand_home("$HOME/Downloads").to_str().unwrap());
 
     // Optional: call the function under test now that the fixture exists
     let _ = write_tracking_file(&root);

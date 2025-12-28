@@ -1,7 +1,7 @@
 
 [package]
-name = "files_sync"
-version = "1.0.0"
+name = "filesync"
+version = "0.1.0"
 edition = "2021"
 description = "Sync dir contents in an orderly manner"
 
@@ -9,6 +9,7 @@ description = "Sync dir contents in an orderly manner"
 blake3 = "1.8.2"
 test-case = "3.3.1"
 walkdir = "2.5.0"
+clap = { version = "4.5.53", features = ["derive"] }
 
 [dev-dependencies]
 test-case = "3.3.1"
