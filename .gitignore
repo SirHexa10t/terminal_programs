@@ -12,4 +12,5 @@ table_formatter/old_and_poc/__pycache__/
 target/
 
 
-files_sync/testing/
+filesync/testing/
+

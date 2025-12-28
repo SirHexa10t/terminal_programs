@@ -29,7 +29,7 @@ fn expand_home(s: &str) -> PathBuf {
 
 #[test]
 fn tracking_file_contains_the_right_amount_of_entries() {
-    creates_complicated_testing_scenario_in_project_dir();
+    creates_complicated_testing_scenario_in_project_dir("testA");
 
     let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let testing_dir = project_root.join("testing");
@@ -56,44 +56,46 @@ fn tracking_file_contains_the_right_amount_of_entries() {
 }
 
 
-fn creates_complicated_testing_scenario_in_project_dir() {
+fn creates_complicated_testing_scenario_in_project_dir(subdir: &str) -> PathBuf {
     let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let root = project_root.join("testing");
+    let root = project_root.join("testing").join(subdir);
 
     let _ = fs::remove_dir_all(&root);
 
-    create_entry(&project_root, "./testing/f1/a.txt", b"");
-    create_entry(&project_root, "./testing/f1/b.txt", b"hello world");
+    create_entry(&root, "f1/a.txt", b"");
+    create_entry(&root, "f1/b.txt", b"hello world");
 
-    create_entry(&project_root, "./testing/f2/a.txt", b"another a");
-    create_entry(&project_root, "./testing/f2/ with space", b"space");
-    create_entry(&project_root, "./testing/f2/special!@#$%^&*()-+`\"\'", b"specials");
-    create_entry(&project_root, "./testing/f2/with\nnewline", b"newline");
+    create_entry(&root, "f2/a.txt", b"another a");
+    create_entry(&root, "f2/ with space", b"space");
+    create_entry(&root, "f2/special!@#$%^&*()-+`\"\'", b"specials");
+    create_entry(&root, "f2/with\nnewline", b"newline");
 
-    create_entry(&project_root, "./testing/f3/inner1", b"");
-    create_entry(&project_root, "./testing/f3/f4/inner2", b"");
+    create_entry(&root, "f3/inner1", b"");
+    create_entry(&root, "f3/f4/inner2", b"");
 
-    create_entry(&project_root, "./testing/f2/.hidden", b"hidden");
-    create_entry(&project_root, "./testing/f2/with\ttab", b"tab");
-    create_entry(&project_root, "./testing/f2/unicode_ハンバーガー_🍣", b"unicode");
-    create_entry(&project_root, "./testing/empty_dir/", b"");
+    create_entry(&root, "f2/.hidden", b"hidden");
+    create_entry(&root, "f2/with\ttab", b"tab");
+    create_entry(&root, "f2/unicode_ハンバーガー_🍣", b"unicode");
+    create_entry(&root, "empty_dir/", b"");
 
-    create_entry(&project_root, "./testing/f4/inner2", b"another inner2");
+    create_entry(&root, "f4/inner2", b"another inner2");
 
     // Symlinks (created as working relative symlinks)
-    // ./testing/f5/sl1 -> ./testing/f1/b.txt
-    create_symlink(&project_root, "./testing/f5/sl1", "../f1/b.txt");
-    // ./testing/f5/sl2 -> ./testing/f5/sl1
-    create_symlink(&project_root, "./testing/f5/sl2", "sl1");
-    // ./testing/f5/f6/sl3 -> ./testing/f5/
-    create_symlink(&project_root, "./testing/f5/f6/sl3", "../..");
-    create_symlink(&project_root, "./testing/f5/f6/sl4", expand_home("$HOME/Downloads").to_str().unwrap());
+    // f5/sl1 -> f1/b.txt
+    create_symlink(&root, "f5/sl1", "../f1/b.txt");
+    // f5/sl2 -> f5/sl1
+    create_symlink(&root, "f5/sl2", "sl1");
+    // f5/f6/sl3 -> f5/
+    create_symlink(&root, "f5/f6/sl3", "../..");
 
-    // Optional: call the function under test now that the fixture exists
+    // Optional: if you still want this here (personally I'd leave it to the test)
     let _ = write_tracking_file(&root);
+
+    root
 }
 
 fn create_entry(root: &Path, rel: &str, contents: &[u8]) -> PathBuf {
+    // Expect paths relative to `root` (e.g., "f1/a.txt" or "empty_dir/")
     let rel = rel.strip_prefix("./").unwrap_or(rel);
 
     if rel.ends_with('/') {
