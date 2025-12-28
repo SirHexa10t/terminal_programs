@@ -29,21 +29,18 @@ fn expand_home(s: &str) -> PathBuf {
 
 #[test]
 fn tracking_file_contains_the_right_amount_of_entries() {
-    creates_complicated_testing_scenario_in_project_dir("testA");
+    let dir_a = creates_complicated_testing_tree("A");
+    let dir_a_tracker = write_tracking_file_with_listing(&dir_a);
 
-    let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let testing_dir = project_root.join("testing");
-    let tracking_path = write_tracking_file_with_listing(&testing_dir);
+    let content = std::fs::read_to_string(&dir_a_tracker).unwrap();
+    let baseline_out = find_escaped_output(&dir_a);
 
-    // Count non-empty lines in the external baseline output.
-    let content = std::fs::read_to_string(&tracking_path).unwrap();
-    let baseline_out = find_escaped_output(&testing_dir);
-
+    /// Count non-empty non-tracker-file lines in the external baseline output.
     fn filtered_line_count(s: &str) -> usize {
         s.lines()
             .map(str::trim_end)
             .filter(|l| !l.is_empty())
-            .filter(|l| !l.contains(TRACKING_FILENAME))
+            .filter(|l| *l != TRACKING_FILENAME)
             .count()
     }
 
@@ -56,7 +53,7 @@ fn tracking_file_contains_the_right_amount_of_entries() {
 }
 
 
-fn creates_complicated_testing_scenario_in_project_dir(subdir: &str) -> PathBuf {
+fn creates_complicated_testing_tree(subdir: &str) -> PathBuf {
     let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let root = project_root.join("testing").join(subdir);
 
@@ -87,9 +84,8 @@ fn creates_complicated_testing_scenario_in_project_dir(subdir: &str) -> PathBuf 
     create_symlink(&root, "f5/sl2", "sl1");
     // f5/f6/sl3 -> f5/
     create_symlink(&root, "f5/f6/sl3", "../..");
-
-    // Optional: if you still want this here (personally I'd leave it to the test)
-    let _ = write_tracking_file(&root);
+    // link outside of project
+    create_symlink(&root, "f5/f6/sl4", expand_home("$HOME/Downloads").to_str().unwrap());
 
     root
 }
@@ -131,13 +127,13 @@ fn create_symlink(root: &Path, link_rel: &str, target: &str) -> PathBuf {
 
 
 /// Runs:
-///   find . -mindepth 1 -printf '%p\0' | xargs -0 -n1 printf '%q\n' | sort
+///   find . -mindepth 1 -printf '%P\0' | xargs -0 -n1 printf '%q\n' | sort
 ///
 /// Notes:
 /// - Uses `sh -lc` because of the pipe.
 fn find_escaped_output(dir: &std::path::Path) -> String {
 
-    let cmd = r"find . -mindepth 1 -printf '%p\0' | xargs -0 -n1 printf '%q\n' | sort";
+    let cmd = r"find . -mindepth 1 -printf '%P\0' | xargs -0 -n1 printf '%q\n' | sort";
     let out = Command::new("sh")
         .arg("-lc")
         .arg(cmd)
