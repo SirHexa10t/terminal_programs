@@ -44,8 +44,9 @@ pub fn write_tracking_file(dir: impl AsRef<Path>) -> (PathBuf, File) {
 
 
 /// Walk directory
-fn discover_files(root: &Path) -> Vec<ManifestEntry> {
+fn discover_files(root: &Path, allowed_prefix: Option<&[String]>) -> Vec<ManifestEntry> {
     let mut out: Vec<ManifestEntry> = WalkDir::new(root).follow_links(false).into_iter()
+        // .filter_entry(|e| allowed_prefix.is_none() || e.file_name().to_string_lossy().starts_with(allowed_prefix.unwrap()))
         .filter_map(|e| e.ok())  // ignore traversal errors for now
         .filter(|e| e.depth() != 0)  // exclude root itself)
         .map(|e| e.path().strip_prefix(root).unwrap().to_path_buf())
@@ -69,22 +70,18 @@ fn discover_files(root: &Path) -> Vec<ManifestEntry> {
 
 
 
-pub fn write_tracking_file_with_content(dir: impl AsRef<Path>) -> PathBuf {
+pub fn write_tracking_file_with_content(dir: impl AsRef<Path>, allowed_prefix: Option<&[String]>) -> PathBuf {
     let dir = dir.as_ref();
     let (tracker_path, tracker_file) = write_tracking_file(dir);
 
-    let entries = discover_files(dir);
+    let entries = discover_files(dir, allowed_prefix);
 
-    // buffered writing (smaller burden on RAM)
-    // let mut w = BufWriter::new(file);
-    // for e in entries {
-    //     writeln!(w, "{}", e.serialize())
-    //         .unwrap_or_else(|err| panic!("failed to write to '{}': {}", tracking_path.display(), err));
-    // }
+    let mut w = BufWriter::new(tracker_file);  // buffered writing (smaller burden on RAM)
+    let data = ManifestEntry::serialize_manifests(&entries);
 
-    let mut w = BufWriter::new(tracker_file);
-    writeln!(w, "{}", ManifestEntry::serialize_manifests(&entries))
-        .unwrap_or_else(|err| panic!("failed to write to '{}': {}", tracker_path.display(), err));
+    for d in data {
+        writeln!(w, "{}", d).unwrap_or_else(|err| panic!("failed to write to '{}': {}", tracker_path.display(), err))
+    }
 
     tracker_path
 }
@@ -99,8 +96,12 @@ pub fn read_tracking_file_into_manifests(tracking_file: &std::path::Path) -> Vec
 }
 
 pub fn read_tracking_file_into_filepaths(tracking_file: &std::path::Path) -> Vec<String> {
-    read_tracking_file_into_string(&tracking_file).lines()
+    let mut strings = read_tracking_file_into_string(&tracking_file).lines()
         .map(|s| ManifestEntry::deserialize_path_key(&s))
-        .collect::<Vec<_>>()
+        .collect::<Vec<_>>();
+
+    // Escaped strings' order can differ after deserialization. Re-sorting might be necessary.
+    strings.sort_unstable();
+    strings
 }
 

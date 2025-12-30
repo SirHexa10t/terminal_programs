@@ -12,27 +12,23 @@ use test_case::test_case;
 use crate::structures::ManifestEntry;
 
 
-macro_rules! assert_lines_eq {
-    ($a:expr, $b:expr $(,)?) => {{
-        let a: Vec<String> = $a;
-        let b: Vec<String> = $b;
+#[track_caller]
+pub fn assert_lines_eq<I, J, A, B>(a: I, b: J)
+where
+    I: IntoIterator<Item = A>,
+    J: IntoIterator<Item = B>,
+    A: AsRef<str>,
+    B: AsRef<str>,
+{
+    let a: Vec<String> = a.into_iter().map(|s| s.as_ref().to_owned()).collect();
+    let b: Vec<String> = b.into_iter().map(|s| s.as_ref().to_owned()).collect();
 
-        assert_eq!(
-            a, b,
-            "Mismatch between lines!\n========First Group:\n{}\n========Second Group:\n{}",
-            a.join("\n"),
-            b.join("\n"),
-        );
-    }};
-}
-
-macro_rules! assert_str_eq {
-    ($a:expr, $b:expr $(,)?) => {{
-        assert_lines_eq!(
-            (&$a).lines().map(str::to_owned).collect::<Vec<String>>(),
-            (&$b).lines().map(str::to_owned).collect::<Vec<String>>(),
-        );
-    }};
+    assert_eq!(
+        a, b,
+        "Mismatch between lines!\n========First Group:\n{}\n========Second Group:\n{}",
+        a.join("\n"),
+        b.join("\n"),
+    );
 }
 
 
@@ -61,7 +57,7 @@ fn test_write_tracking_file(dir_spec: &str) {
     assert_file_non_empty(&same_file);  // checking file wasn't overwritten
     assert!(read_tracking_file_into_string(&same_path).contains(our_string));
 
-    let filled_file_path = write_tracking_file_with_content(&base_dir);  // rewrite file contents
+    let filled_file_path = write_tracking_file_with_content(&base_dir, None);  // rewrite file contents
     assert!(!read_tracking_file_into_string(&filled_file_path).contains(our_string));  // make sure previous string is overwritten
 
     let _ = fs::remove_file(&filled_file_path);  // cleanup - remove tracking-file
@@ -73,7 +69,7 @@ fn tracking_file_compare_with_shell_command() {
     let tracker_content = create_tree_and_tracker_and_read_paths("S", None);
     let baseline_out = find_escaped_output(&define_tmp_dir("S"));
 
-    assert_lines_eq!(tracker_content, baseline_out);
+    assert_eq!(tracker_content, baseline_out);
 }
 
 #[test]
@@ -85,8 +81,18 @@ fn check_serialized_deserialization_is_same() {
     // deserialize from String, then serialize into String
     let undeserailized = ManifestEntry::serialize_manifests(ManifestEntry::deserialize_manifests(&file_content).as_slice());
 
-    assert_str_eq!(&file_content, undeserailized);
+    assert_eq!(file_content.lines().collect::<Vec<_>>(), undeserailized);
 }
+
+/// tracking with specific prefixes (rather than all files)
+#[test]
+fn test_picked_track_scans() {
+    // TODO - pick a subdir, check that only those got "walked"
+    // TODO - pick another subdir, check that those got walked and added (not replacing previous)
+    // TODO - move a file, rescan, and see that the tracking file got updated (erasing relevant previous entries)
+    // TODO - check unicode prefixes
+}
+
 
 // #[test]
 fn detect_differences_between_filetrees() {
@@ -95,14 +101,14 @@ fn detect_differences_between_filetrees() {
     let extras: Vec<String> = vec!["EXTRA/x.txt".into(), "EXTRA/y.txt".into()];
     let tracker_content_b = create_tree_and_tracker_and_read_paths("B", Some(&extras));  // B has "extra" files
 
-    assert_lines_eq!(tracker_content_a, tracker_content_b);
+    assert_eq!(tracker_content_a, tracker_content_b);
 }
 
 
 /// returns the path of the newly created tracking file
 fn create_tree_and_tracker(subdir: &str, extra: Option<&[String]>) -> PathBuf {
     let new_dir = creates_complicated_testing_tree(subdir, extra);
-    write_tracking_file_with_content(&new_dir)
+    write_tracking_file_with_content(&new_dir, None)
 }
 
 /// returns the newly made and listed files within the new tracking file

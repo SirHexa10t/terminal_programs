@@ -8,7 +8,7 @@ use std::path::PathBuf;
     about = "Sync directories by tracking and comparing directory trees",
     after_help = r#"EXAMPLES:
   filesync -t "$HOME/Downloads"
-  filesync -t "$HOME/Downloads" -o firefox_pictures
+  filesync -t "$HOME/Downloads" -p firefox_pictures -p chrome
   filesync -d "$HOME/Downloads" "$HOME/Pictures"
   filesync -s "$HOME/Downloads" "$HOME/Pictures" --dry-run
 "#
@@ -37,9 +37,9 @@ struct Args {
 
     //optionals:
 
-    /// Only include paths under SUBDIR (repeatable). Allowed in any mode.
-    #[arg(short = 'o', long = "only", value_name = "SUBDIR", action = ArgAction::Append)]
-    only: Vec<PathBuf>,
+    /// Only include paths that start with PREFIX (repeatable). Allowed in any mode.
+    #[arg(short, long, value_name = "PREFIX", action = ArgAction::Append)]
+    prefix: Option<Vec<String>>,
 
     /// Print actions only (valid with --sync)
     #[arg(long, requires = "sync")]
@@ -52,7 +52,7 @@ fn main() {
     let args = Args::parse();
 
     if let Some(dir) = args.track {
-        filesync::write_tracking_file_with_content(dir);
+        filesync::write_tracking_file_with_content(dir, args.prefix.as_deref());
     } else if let Some(v) = args.diff {
         let master = &v[0];
         let slave = &v[1];

@@ -138,7 +138,7 @@ impl ManifestEntry {
 
     /// Render entries as aligned lines: `<path_key_json><spaces><record_json>\n`
     /// where `record_json` starts at the same column for all lines.
-    pub fn serialize_manifests(entries: &[ManifestEntry]) -> String {
+    pub fn serialize_manifests(entries: &[ManifestEntry]) -> Vec<String> {
         // Parallel map: ManifestEntry -> (key, record)
         let pairs: Vec<(String, String)> = entries.par_iter()
             .map(ManifestEntry::serialize)
@@ -160,7 +160,7 @@ impl ManifestEntry {
             .collect();
 
         lines.par_sort_unstable();
-        lines.join("\n")
+        lines
     }
 
 
