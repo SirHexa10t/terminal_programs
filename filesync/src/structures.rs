@@ -8,7 +8,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::os::unix::fs::MetadataExt;
 use base64::Engine as _;
 use os_str_bytes::OsStrBytes;
-
+use rayon::prelude::*;
+use unicode_width::UnicodeWidthStr;
 
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -54,7 +55,6 @@ pub struct ManifestEntry {
 }
 
 impl ManifestEntry {
-    const SEP: &'static str = "  ";
 
     pub fn from_rel_path(root: &Path, rel: PathBuf) -> Self {
         let full = root.join(&rel);
@@ -100,36 +100,81 @@ impl ManifestEntry {
         }
     }
 
+    pub fn deserialize_line(line: &str) -> Self {
+        let mut de = serde_json::Deserializer::from_str(line);
+
+        let path_key = String::deserialize(&mut de)
+            .unwrap_or_else(|e| panic!("invalid path json: {e}; line={line:?}"));
+
+        // record follows after whitespace
+        let record = FileMeta::deserialize(&mut de)
+            .unwrap_or_else(|e| panic!("invalid record json: {e}; line={line:?}"));
+
+        // Verify there is nothing else after the record (besides whitespace)
+        if !de.end().is_ok() {
+            panic!("tracking line has trailing junk; line={line:?}");
+        }
+
+        ManifestEntry { path_key, record }
+    }
+
 
     pub fn path_key(&self) -> &str {
         &self.path_key
     }
 
-    pub fn serialize_line(&self) -> String {
-        let key_json = serialize_escaped(&self.path_key);
-        let rec_json = serialize_escaped(&self.record);
-        format!("{key_json}{}{rec_json}", Self::SEP)
+    fn serialize(&self) -> (String, String) {
+        (serde_json::to_string(&self.path_key).unwrap(), serde_json::to_string(&self.record).unwrap())
     }
 
-    pub fn deserialize_line(line: &str) -> Self {
-        let (key_json, rec_json) = line
-            .split_once(Self::SEP)
-            .expect("invalid tracking line (missing separator)");
+    /// Deserialize only the leading JSON string (path_key) from a line (even if there's nothing after)
+    pub fn deserialize_path_key(line: &str) -> String {
+        let mut it = serde_json::Deserializer::from_str(line).into_iter::<String>();
 
-        let path_key: String = serde_json::from_str(key_json)
-            .unwrap_or_else(|e| panic!("invalid path json: {e}"));
-
-        let record: FileMeta = serde_json::from_str(rec_json)
-            .unwrap_or_else(|e| panic!("invalid record json: {e}"));
-
-        Self { path_key, record }
+        it.next()
+            .unwrap_or_else(|| panic!("tracking line missing path key; line={line:?}"))
+            .unwrap_or_else(|e| panic!("invalid path json: {e}; line={line:?}"))
     }
 
+    /// Render entries as aligned lines: `<path_key_json><spaces><record_json>\n`
+    /// where `record_json` starts at the same column for all lines.
+    pub fn serialize_manifests(entries: &[ManifestEntry]) -> String {
+        // Parallel map: ManifestEntry -> (key, record)
+        let pairs: Vec<(String, String)> = entries.par_iter()
+            .map(ManifestEntry::serialize)
+            .collect();
+
+        let pad_to = pairs.par_iter()
+            .map(|(k, _)| UnicodeWidthStr::width(k.as_str()))  // align visually, by width of characters, not byte-length
+            .max()
+            .unwrap_or(0)
+            + 2;  // minimum 2 spaces in-between
+
+        // Build final string (sequential join; avoids contention)
+        let mut lines: Vec<String> = pairs.into_par_iter()
+            .map(|(k, r)| [
+                k.as_str(),
+                &" ".repeat(pad_to.saturating_sub(UnicodeWidthStr::width(k.as_str()))),
+                r.as_str()
+            ].into_iter().collect())
+            .collect();
+
+        lines.par_sort_unstable();
+        lines.join("\n")
+    }
+
+
+    pub fn deserialize_manifests(content: &str) -> Vec<ManifestEntry> {
+        let mut entries: Vec<ManifestEntry> = content.par_lines()
+            .filter(|l| !l.is_empty())
+            .map(ManifestEntry::deserialize_line)
+            .collect();
+
+        entries.par_sort_unstable_by(|a, b| a.path_key().cmp(b.path_key()));
+        entries
+    }
 }
 
-pub fn serialize_escaped<T: Serialize>(v: &T) -> String {
-    serde_json::to_string(v).unwrap()
-}
 
 
 fn mtime_ns(md: &fs::Metadata) -> i128 {

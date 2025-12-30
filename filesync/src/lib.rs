@@ -6,19 +6,17 @@ mod structures;
 use crate::structures::ManifestEntry;
 
 use std::fs;
+use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 use std::io::{Write, BufWriter};
 
-
-
-
 pub const TRACKING_FILENAME: &str = "filesync_tracking.txt";
 
-pub fn write_tracking_file(dir: impl AsRef<Path>) -> PathBuf {
+pub fn write_tracking_file(dir: impl AsRef<Path>) -> (PathBuf, File) {
     let dir = dir.as_ref();
 
-    match fs::metadata(dir) {
+    match fs::metadata(&dir) {
         Ok(md) if md.is_dir() => {}
         Ok(_) => panic!("not a directory: '{}'", dir.display()),
         Err(e) => panic!("metadata failed for '{}': {}", dir.display(), e),
@@ -33,14 +31,20 @@ pub fn write_tracking_file(dir: impl AsRef<Path>) -> PathBuf {
         Err(e) => panic!("metadata failed for '{}': {}", file_path.display(), e),
     }
 
-    if let Err(e) = fs::File::create(&file_path) {
-        panic!("failed to create '{}': {}", file_path.display(), e);
-    }
+    let file = OpenOptions::new()
+        .create(true)
+        .read(true)  // for optionally reading from the same handle later
+        .write(true)  // for optionally writing with the same handle later
+        .open(&file_path)
+        .unwrap_or_else(|e| panic!("failed to create '{}': {}", file_path.display(), e));
 
-    file_path
+    (file_path, file)
 }
 
-fn list_track_entries(root: &Path) -> Vec<ManifestEntry> {
+
+
+/// Walk directory
+fn discover_files(root: &Path) -> Vec<ManifestEntry> {
     let mut out: Vec<ManifestEntry> = WalkDir::new(root).follow_links(false).into_iter()
         .filter_map(|e| e.ok())  // ignore traversal errors for now
         .filter(|e| e.depth() != 0)  // exclude root itself)
@@ -54,23 +58,49 @@ fn list_track_entries(root: &Path) -> Vec<ManifestEntry> {
 }
 
 
+// pub fn paths_to_manifests_ordered(root: &Path, paths: &[PathBuf]) -> Vec<ManifestEntry> {
+//     let mut manifests: Vec<ManifestEntry> = paths.iter()
+//         .map(|rel| ManifestEntry::from_rel_path(root, rel.clone()))
+//         .collect();
+//
+//     manifests.sort_by(|a, b| a.path_key().cmp(b.path_key()));
+//     manifests
+// }
 
 
 
-pub fn write_tracking_file_with_listing(dir: impl AsRef<Path>) -> PathBuf {
+pub fn write_tracking_file_with_content(dir: impl AsRef<Path>) -> PathBuf {
     let dir = dir.as_ref();
-    let tracking_path = write_tracking_file(dir);
+    let (tracker_path, tracker_file) = write_tracking_file(dir);
 
-    let entries = list_track_entries(dir);
+    let entries = discover_files(dir);
 
-    let file = fs::File::create(&tracking_path)
-        .unwrap_or_else(|e| panic!("failed to create '{}': {}", tracking_path.display(), e));
-    let mut w = BufWriter::new(file);
+    // buffered writing (smaller burden on RAM)
+    // let mut w = BufWriter::new(file);
+    // for e in entries {
+    //     writeln!(w, "{}", e.serialize())
+    //         .unwrap_or_else(|err| panic!("failed to write to '{}': {}", tracking_path.display(), err));
+    // }
 
-    for e in entries {
-        writeln!(w, "{}", e.serialize_line())
-            .unwrap_or_else(|err| panic!("failed to write to '{}': {}", tracking_path.display(), err));
-    }
+    let mut w = BufWriter::new(tracker_file);
+    writeln!(w, "{}", ManifestEntry::serialize_manifests(&entries))
+        .unwrap_or_else(|err| panic!("failed to write to '{}': {}", tracker_path.display(), err));
 
-    tracking_path
+    tracker_path
 }
+
+pub fn read_tracking_file_into_string(tracking_file: &std::path::Path) -> String {
+    std::fs::read_to_string(tracking_file)
+        .unwrap_or_else(|e| panic!("failed to read '{}': {}", tracking_file.display(), e))
+}
+
+pub fn read_tracking_file_into_manifests(tracking_file: &std::path::Path) -> Vec<ManifestEntry> {
+    ManifestEntry::deserialize_manifests(&read_tracking_file_into_string(&tracking_file))
+}
+
+pub fn read_tracking_file_into_filepaths(tracking_file: &std::path::Path) -> Vec<String> {
+    read_tracking_file_into_string(&tracking_file).lines()
+        .map(|s| ManifestEntry::deserialize_path_key(&s))
+        .collect::<Vec<_>>()
+}
+

@@ -1,6 +1,7 @@
-use crate::{write_tracking_file, write_tracking_file_with_listing, TRACKING_FILENAME};
+use crate::{read_tracking_file_into_filepaths, read_tracking_file_into_string, write_tracking_file, write_tracking_file_with_content, TRACKING_FILENAME};
 use std::env;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::os::unix::fs as unix_fs;  // we're supporting unix filesystem features such as symlinks
 use std::process::Command;
@@ -8,42 +9,116 @@ use rayon::prelude::*;
 
 
 use test_case::test_case;
+use crate::structures::ManifestEntry;
 
-#[test_case("$HOME/Downloads")]
-fn writes_empty_tracking_file_into_dir(dir_spec: &str) {
-    let base_dir = expand_home(dir_spec);
-    let file_path = write_tracking_file(&base_dir);  // if this doesn't panic, we're good
 
-    let _ = fs::remove_file(&file_path);  // cleanup
+macro_rules! assert_lines_eq {
+    ($a:expr, $b:expr $(,)?) => {{
+        let a: Vec<String> = $a;
+        let b: Vec<String> = $b;
+
+        assert_eq!(
+            a, b,
+            "Mismatch between lines!\n========First Group:\n{}\n========Second Group:\n{}",
+            a.join("\n"),
+            b.join("\n"),
+        );
+    }};
+}
+
+macro_rules! assert_str_eq {
+    ($a:expr, $b:expr $(,)?) => {{
+        assert_lines_eq!(
+            (&$a).lines().map(str::to_owned).collect::<Vec<String>>(),
+            (&$b).lines().map(str::to_owned).collect::<Vec<String>>(),
+        );
+    }};
 }
 
 
-fn expand_home(s: &str) -> PathBuf {
-    if s.starts_with("$HOME/") || s == "$HOME" {
-        let home = env::var("HOME").expect("HOME is not set");
-        let rest = s.strip_prefix("$HOME").unwrap();
-        return PathBuf::from(home).join(rest.trim_start_matches('/'));
-    }
-    PathBuf::from(s)
+#[test_case("$HOME/Downloads")]
+fn test_write_tracking_file(dir_spec: &str) {
+    let base_dir = expand_home(dir_spec);
+
+    // write empty file
+    let (_, mut file) = write_tracking_file(&base_dir);  // if this doesn't panic, we're good
+
+    fn assert_file_empty(file: &fs::File) { assert_eq!(file.metadata().expect("can't check file metadata!").len(), 0) }
+    fn assert_file_non_empty(file: &fs::File) { assert!(file.metadata().expect("can't check file metadata!!").len() > 0) }
+
+
+    file.set_len(0).expect(""); // clears content
+    assert_file_empty(&file);
+
+    let our_string = "AAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBB\n";
+
+    // make sure that writing the file doesn't overwrite it, if it exists
+    file.write_all(our_string.as_bytes()).expect("failed to write to file");
+    file.flush().expect("failed to flush"); // harmless for File; required if buffered somewhere
+    assert_file_non_empty(&file);
+
+    let (same_path, same_file) = write_tracking_file(&base_dir);  // writing again
+    assert_file_non_empty(&same_file);  // checking file wasn't overwritten
+    assert!(read_tracking_file_into_string(&same_path).contains(our_string));
+
+    let filled_file_path = write_tracking_file_with_content(&base_dir);  // rewrite file contents
+    assert!(!read_tracking_file_into_string(&filled_file_path).contains(our_string));  // make sure previous string is overwritten
+
+    let _ = fs::remove_file(&filled_file_path);  // cleanup - remove tracking-file
 }
 
 
 #[test]
-fn tracking_file_compare_with_external_command() {
-    let dir_a = creates_complicated_testing_tree("A");
-    let dir_a_tracker = write_tracking_file_with_listing(&dir_a);
+fn tracking_file_compare_with_shell_command() {
+    let tracker_content = create_tree_and_tracker_and_read_paths("S", None);
+    let baseline_out = find_escaped_output(&define_tmp_dir("S"));
 
-    let tracker_content = path_keys_from_tracking_file(&dir_a_tracker);
-    let baseline_out = find_escaped_output(&dir_a);
+    assert_lines_eq!(tracker_content, baseline_out);
+}
 
-    assert_eq!(tracker_content, baseline_out,
-               "tracking file line count mismatch: tracking={}, baseline={}", tracker_content.join("\n"), baseline_out.join("\n"));
+#[test]
+fn check_serialized_deserialization_is_same() {
+    let tracker_filepath = create_tree_and_tracker("serialization_test", None);
+
+    let file_content: String = read_tracking_file_into_string(&tracker_filepath);
+
+    // deserialize from String, then serialize into String
+    let undeserailized = ManifestEntry::serialize_manifests(ManifestEntry::deserialize_manifests(&file_content).as_slice());
+
+    assert_str_eq!(&file_content, undeserailized);
+}
+
+// #[test]
+fn detect_differences_between_filetrees() {
+    // need to read only paths because the creation date would be different
+    let tracker_content_a = create_tree_and_tracker_and_read_paths("A", None);
+    let extras: Vec<String> = vec!["EXTRA/x.txt".into(), "EXTRA/y.txt".into()];
+    let tracker_content_b = create_tree_and_tracker_and_read_paths("B", Some(&extras));  // B has "extra" files
+
+    assert_lines_eq!(tracker_content_a, tracker_content_b);
 }
 
 
-fn creates_complicated_testing_tree(subdir: &str) -> PathBuf {
+/// returns the path of the newly created tracking file
+fn create_tree_and_tracker(subdir: &str, extra: Option<&[String]>) -> PathBuf {
+    let new_dir = creates_complicated_testing_tree(subdir, extra);
+    write_tracking_file_with_content(&new_dir)
+}
+
+/// returns the newly made and listed files within the new tracking file
+fn create_tree_and_tracker_and_read_paths(subdir: &str, extra: Option<&[String]>) -> Vec<String> {
+    let tracker_filepath = create_tree_and_tracker(subdir, extra);
+    read_tracking_file_into_filepaths(&tracker_filepath)
+}
+
+
+fn define_tmp_dir(subdir: &str) -> PathBuf {
     let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let root = project_root.join("testing").join(subdir);
+    project_root.join("testing").join(subdir)
+}
+
+fn creates_complicated_testing_tree(subdir: &str, extra: Option<&[String]>) -> PathBuf {
+    let root = define_tmp_dir(subdir);
 
     let _ = fs::remove_dir_all(&root);
 
@@ -53,11 +128,15 @@ fn creates_complicated_testing_tree(subdir: &str) -> PathBuf {
 
     // problematic chars
     create_entry(&root, "f2/a.txt", b"another a");
-    create_entry(&root, "f2/ with space", b"space");
+    create_entry(&root, "f2/ with    space", b"space");
     create_entry(&root, "f2/special!@#$%^&*()-+`\"\'", b"specials");
     create_entry(&root, "f2/with\nnewline", b"newline");
     create_entry(&root, "f2/with\ttab", b"tab");
     create_entry(&root, "f2/unicode_ハンバーガー_🍣", b"unicode");
+    create_entry(&root, "f2/unicode_ハハハハハハハハハ", b"unicode");
+    create_entry(&root, "f2/unicode_🍣🍣🍣🍣🍣🍣🍣🍣", b"unicode");
+    create_entry(&root, "f2/emojis_🇺🇸🇺🇸🇺🇸🇺🇸🇺🇸🇺🇸🇺🇸", b"unicode");
+    create_entry(&root, "f2/escaped_\\\'\"\'\'\\\\\t\\\'", b"unicode");
 
     // hierarchy/hidden
     create_entry(&root, "f3/inner1", b"");
@@ -65,7 +144,8 @@ fn creates_complicated_testing_tree(subdir: &str) -> PathBuf {
     create_entry(&root, "f3/.hidden", b"hidden");
 
     // empty
-    create_entry(&root, "empty_dir/", b"");
+    create_entry(&root, "empty_dir/", b"");  // empty dir
+    create_entry(&root, "empty_file", b"");  // empty file in root
 
     // extra instances
     create_entry(&root, "f4/inner2", b"another inner2");  // "duplicate" file
@@ -77,7 +157,24 @@ fn creates_complicated_testing_tree(subdir: &str) -> PathBuf {
     create_symlink(&root, "f5/f6/sl3", "../..");  // f5/f6/sl3 -> f5/
     create_symlink(&root, "f5/f6/sl4", expand_home("$HOME/Downloads").to_str().unwrap());  // link outside of project
 
+    // extras (optional)
+    if let Some(extra) = extra {
+        for rel in extra {
+            create_entry(&root, rel, b"");
+        }
+    }
+
     root
+}
+
+
+fn expand_home(s: &str) -> PathBuf {
+    if s.starts_with("$HOME/") || s == "$HOME" {
+        let home = env::var("HOME").expect("HOME is not set");
+        let rest = s.strip_prefix("$HOME").unwrap();
+        return PathBuf::from(home).join(rest.trim_start_matches('/'));
+    }
+    PathBuf::from(s)
 }
 
 fn create_entry(root: &Path, rel: &str, contents: &[u8]) -> PathBuf {
@@ -115,7 +212,6 @@ fn create_symlink(root: &Path, link_rel: &str, target: &str) -> PathBuf {
 }
 
 
-
 /// Runs:
 ///   find . -mindepth 1 -printf '%P\0'
 /// Then escapes the output and sorts it.
@@ -143,18 +239,5 @@ fn find_escaped_output(dir: &std::path::Path) -> Vec<String> {
 
     lines.par_sort_unstable();  // no need to preserve equals' order; run it a bit faster
     lines
-}
-
-// Tracking file -> sorted Vec<String> of path_keys
-fn path_keys_from_tracking_file(tracking_file: &std::path::Path) -> Vec<String> {
-    let mut content: Vec<String> = std::fs::read_to_string(tracking_file)
-        .unwrap_or_else(|e| panic!("failed to read '{}': {}", tracking_file.display(), e))
-        .par_lines()
-        .filter(|l| !l.is_empty())
-        .map(|line| crate::ManifestEntry::deserialize_line(line).path_key().to_owned())
-        .collect();
-
-    content.par_sort_unstable();
-    content
 }
 

@@ -52,7 +52,7 @@ fn main() {
     let args = Args::parse();
 
     if let Some(dir) = args.track {
-        filesync::write_tracking_file_with_listing(dir);
+        filesync::write_tracking_file_with_content(dir);
     } else if let Some(v) = args.diff {
         let master = &v[0];
         let slave = &v[1];
