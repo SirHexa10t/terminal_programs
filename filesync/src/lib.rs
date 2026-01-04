@@ -1,6 +1,9 @@
 #[cfg(test)]
 mod tests;
 mod structures;
+mod args_parse;
+
+pub use crate::args_parse::ProgramArgs;
 
 #[cfg(unix)]
 use crate::structures::ManifestEntry;
@@ -12,6 +15,25 @@ use walkdir::WalkDir;
 use std::io::{Write, BufWriter};
 
 pub const TRACKING_FILENAME: &str = "filesync_tracking.txt";
+
+pub fn run(args: ProgramArgs) -> String {
+    if let Some(dir) = args.track {
+        write_tracking_file_with_content(dir, args.prefix.as_deref())
+            .to_str().unwrap().to_string()
+    } else if let Some(files_pair) = args.diff {
+        let master = &files_pair[0];
+        let slave = &files_pair[1];
+        // ...
+        "".to_string()
+    } else if let Some(dirs) = args.sync {
+        let master = &dirs[0];
+        let slave = &dirs[1];
+        // ...
+        "".to_string()
+    } else {
+        unreachable!("clap ArgGroup enforces exactly one command");
+    }
+}
 
 pub fn write_tracking_file(dir: impl AsRef<Path>) -> (PathBuf, File) {
     let dir = dir.as_ref();
@@ -44,9 +66,17 @@ pub fn write_tracking_file(dir: impl AsRef<Path>) -> (PathBuf, File) {
 
 
 /// Walk directory
-fn discover_files(root: &Path, allowed_prefix: Option<&[String]>) -> Vec<ManifestEntry> {
+fn discover_files(root: &Path, allowed_prefixes: Option<&[String]>) -> Vec<ManifestEntry> {
+    let root_str = root.to_str().unwrap();
+
     let mut out: Vec<ManifestEntry> = WalkDir::new(root).follow_links(false).into_iter()
-        // .filter_entry(|e| allowed_prefix.is_none() || e.file_name().to_string_lossy().starts_with(allowed_prefix.unwrap()))
+        .filter_entry(|e| {
+            allowed_prefixes.is_none() || e.depth() == 0 || {  // depth 0 is root, which we don't want to stop at
+                allowed_prefixes.unwrap().iter()
+                    .map(|p| format!("{}/{}", root_str, p))
+                    .any(|s| e.path().starts_with(s))
+            }
+        })
         .filter_map(|e| e.ok())  // ignore traversal errors for now
         .filter(|e| e.depth() != 0)  // exclude root itself)
         .map(|e| e.path().strip_prefix(root).unwrap().to_path_buf())
@@ -76,9 +106,8 @@ pub fn write_tracking_file_with_content(dir: impl AsRef<Path>, allowed_prefix: O
 
     let entries = discover_files(dir, allowed_prefix);
 
-    let mut w = BufWriter::new(tracker_file);  // buffered writing (smaller burden on RAM)
     let data = ManifestEntry::serialize_manifests(&entries);
-
+    let mut w = BufWriter::new(tracker_file);  // buffered writing (smaller burden on RAM)
     for d in data {
         writeln!(w, "{}", d).unwrap_or_else(|err| panic!("failed to write to '{}': {}", tracker_path.display(), err))
     }

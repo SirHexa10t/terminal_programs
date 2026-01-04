@@ -1,35 +1,16 @@
-use crate::{read_tracking_file_into_filepaths, read_tracking_file_into_string, write_tracking_file, write_tracking_file_with_content, TRACKING_FILENAME};
+use crate::{read_tracking_file_into_filepaths, read_tracking_file_into_string, run, write_tracking_file, write_tracking_file_with_content, ProgramArgs, TRACKING_FILENAME};
 use std::env;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::os::unix::fs as unix_fs;  // we're supporting unix filesystem features such as symlinks
 use std::process::Command;
+use clap::Parser;
 use rayon::prelude::*;
 
 
 use test_case::test_case;
 use crate::structures::ManifestEntry;
-
-
-#[track_caller]
-pub fn assert_lines_eq<I, J, A, B>(a: I, b: J)
-where
-    I: IntoIterator<Item = A>,
-    J: IntoIterator<Item = B>,
-    A: AsRef<str>,
-    B: AsRef<str>,
-{
-    let a: Vec<String> = a.into_iter().map(|s| s.as_ref().to_owned()).collect();
-    let b: Vec<String> = b.into_iter().map(|s| s.as_ref().to_owned()).collect();
-
-    assert_eq!(
-        a, b,
-        "Mismatch between lines!\n========First Group:\n{}\n========Second Group:\n{}",
-        a.join("\n"),
-        b.join("\n"),
-    );
-}
 
 
 #[test_case("$HOME/Downloads")]
@@ -82,6 +63,20 @@ fn check_serialized_deserialization_is_same() {
     let undeserailized = ManifestEntry::serialize_manifests(ManifestEntry::deserialize_manifests(&file_content).as_slice());
 
     assert_eq!(file_content.lines().collect::<Vec<_>>(), undeserailized);
+}
+
+
+#[test]
+fn test_args_cli_track() {
+
+    fn run_w_args(args: &[&str]) -> String { run(ProgramArgs::parse_from(args)) }
+
+    let root = creates_complicated_testing_tree("CLI", None);
+    // let tracker = run_w_args(&["filesync", "--track", expand_home("$HOME/Downloads").to_str().unwrap()]);
+    // let tracker1 = run_w_args(&["filesync", "--track", &root.to_str().unwrap()]);
+    let tracker2 = run_w_args(&["filesync", "--track", &root.to_str().unwrap(), "-p", "f3"]);
+
+
 }
 
 /// tracking with specific prefixes (rather than all files)
@@ -143,6 +138,7 @@ fn creates_complicated_testing_tree(subdir: &str, extra: Option<&[String]>) -> P
     create_entry(&root, "f2/unicode_🍣🍣🍣🍣🍣🍣🍣🍣", b"unicode");
     create_entry(&root, "f2/emojis_🇺🇸🇺🇸🇺🇸🇺🇸🇺🇸🇺🇸🇺🇸", b"unicode");
     create_entry(&root, "f2/escaped_\\\'\"\'\'\\\\\t\\\'", b"unicode");
+    create_entry(&root, "ハwハwハ", b"unicode");
 
     // hierarchy/hidden
     create_entry(&root, "f3/inner1", b"");
@@ -194,9 +190,7 @@ fn create_entry(root: &Path, rel: &str, contents: &[u8]) -> PathBuf {
     }
 
     let file_path = root.join(rel);
-    if let Some(parent) = file_path.parent() {
-        fs::create_dir_all(parent).unwrap();
-    }
+    fs::create_dir_all(file_path.parent().unwrap()).unwrap();
     fs::write(&file_path, contents).unwrap();
     file_path
 }
@@ -225,23 +219,18 @@ fn create_symlink(root: &Path, link_rel: &str, target: &str) -> PathBuf {
 /// Notes:
 /// - Uses `sh -lc` because of the pipe.
 fn find_escaped_output(dir: &std::path::Path) -> Vec<String> {
-    // run "find" command
-    let out = Command::new("sh")
+    let mut lines: Vec<String> = Command::new("sh")  // run "find" command
         .arg("-lc")
         .arg(r"find . -mindepth 1 -printf '%P\0'")
         .current_dir(dir)
-        .output()
-        .unwrap_or_else(|e| panic!("failed to run shell command in '{}': {}", dir.display(), e));
-
-    // check that return code was 0, and process/collect the data
-    let mut lines: Vec<String> = match out.status.success() {
-        false => panic!("find failed in '{}': exit={:?}, stderr={}", dir.display(), out.status.code(), String::from_utf8_lossy(&out.stderr)),
-        true => out.stdout.par_split(|&b| b == 0)  // split stdout on \0
-            .filter(|s| !s.is_empty())  // sanitize
-            .filter(|s| *s != TRACKING_FILENAME.as_bytes())  // sanitize
-            .map(|s| String::from_utf8_lossy(s).into_owned())
-            .collect()
-    };
+        .output()       // shell command output
+        .inspect_err(|e| panic!("failed to run shell command in '{}': {}", dir.display(), e))
+        .inspect( |out| assert!(out.status.success(), "find failed in '{}': exit={:?}, stderr={}", dir.display(), out.status.code(), String::from_utf8_lossy(&out.stderr),) )
+        .unwrap().stdout.par_split(|&b| b == 0)  // split stdout on \0
+        .filter(|s| !s.is_empty())  // sanitize
+        .filter(|s| *s != TRACKING_FILENAME.as_bytes())  // sanitize
+        .map(|s| String::from_utf8_lossy(s).into_owned())
+        .collect();
 
     lines.par_sort_unstable();  // no need to preserve equals' order; run it a bit faster
     lines
