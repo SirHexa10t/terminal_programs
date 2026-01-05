@@ -13,6 +13,7 @@ use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 use std::io::{Write, BufWriter};
+use crate::structures::Manifest;
 
 pub const TRACKING_FILENAME: &str = "filesync_tracking.txt";
 
@@ -41,7 +42,7 @@ pub fn write_tracking_file(dir: impl AsRef<Path>) -> (PathBuf, File) {
     match fs::metadata(&dir) {
         Ok(md) if md.is_dir() => {}
         Ok(_) => panic!("not a directory: '{}'", dir.display()),
-        Err(e) => panic!("metadata failed for '{}': {}", dir.display(), e),
+        Err(e) => panic!("metadata failed for '{}': {e}", dir.display()),
     }
 
     let file_path = dir.join(TRACKING_FILENAME);
@@ -50,7 +51,7 @@ pub fn write_tracking_file(dir: impl AsRef<Path>) -> (PathBuf, File) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}  // doesn't exist: ok
         Ok(m) if m.is_file() => {}                             // exists and is file: ok
         Ok(_) => panic!("tracking path exists but is not a file: '{}'", file_path.display()),
-        Err(e) => panic!("metadata failed for '{}': {}", file_path.display(), e),
+        Err(e) => panic!("metadata failed for '{}': {e}", file_path.display()),
     }
 
     let file = OpenOptions::new()
@@ -58,7 +59,7 @@ pub fn write_tracking_file(dir: impl AsRef<Path>) -> (PathBuf, File) {
         .read(true)  // for optionally reading from the same handle later
         .write(true)  // for optionally writing with the same handle later
         .open(&file_path)
-        .unwrap_or_else(|e| panic!("failed to create '{}': {}", file_path.display(), e));
+        .unwrap_or_else(|e| panic!("failed to create '{}': {e}", file_path.display()));
 
     (file_path, file)
 }
@@ -66,14 +67,15 @@ pub fn write_tracking_file(dir: impl AsRef<Path>) -> (PathBuf, File) {
 
 
 /// Walk directory
-fn discover_files(root: &Path, allowed_prefixes: Option<&[String]>) -> Vec<ManifestEntry> {
+fn discover_files(root: &Path, allowed_prefixes: Option<&[String]>) -> Manifest {
     let root_str = root.to_str().unwrap();
 
-    let mut out: Vec<ManifestEntry> = WalkDir::new(root).follow_links(false).into_iter()
+    let mut out: Manifest = WalkDir::new(root).follow_links(false).into_iter()
         .filter_entry(|e| {
             allowed_prefixes.is_none() || e.depth() == 0 || {  // depth 0 is root, which we don't want to stop at
-                allowed_prefixes.unwrap().iter()
-                    .map(|p| format!("{}/{}", root_str, p))
+                allowed_prefixes.into_iter()
+                    .flatten()
+                    .map(|p| format!("{root_str}/{p}"))
                     .any(|s| e.path().starts_with(s))
             }
         })
@@ -84,19 +86,9 @@ fn discover_files(root: &Path, allowed_prefixes: Option<&[String]>) -> Vec<Manif
         .map(|rel| ManifestEntry::from_rel_path(root, rel))
         .collect();
 
-    out.sort_by(|a, b| a.path_key().cmp(b.path_key()));
+    out.sort();
     out
 }
-
-
-// pub fn paths_to_manifests_ordered(root: &Path, paths: &[PathBuf]) -> Vec<ManifestEntry> {
-//     let mut manifests: Vec<ManifestEntry> = paths.iter()
-//         .map(|rel| ManifestEntry::from_rel_path(root, rel.clone()))
-//         .collect();
-//
-//     manifests.sort_by(|a, b| a.path_key().cmp(b.path_key()));
-//     manifests
-// }
 
 
 
@@ -106,10 +98,10 @@ pub fn write_tracking_file_with_content(dir: impl AsRef<Path>, allowed_prefix: O
 
     let entries = discover_files(dir, allowed_prefix);
 
-    let data = ManifestEntry::serialize_manifests(&entries);
+    let data = Manifest::serialize(entries);
     let mut w = BufWriter::new(tracker_file);  // buffered writing (smaller burden on RAM)
     for d in data {
-        writeln!(w, "{}", d).unwrap_or_else(|err| panic!("failed to write to '{}': {}", tracker_path.display(), err))
+        writeln!(w, "{}", d).unwrap_or_else(|err| panic!("failed to write to '{}': {err}", tracker_path.display()))
     }
 
     tracker_path
@@ -117,12 +109,12 @@ pub fn write_tracking_file_with_content(dir: impl AsRef<Path>, allowed_prefix: O
 
 pub fn read_tracking_file_into_string(tracking_file: &std::path::Path) -> String {
     std::fs::read_to_string(tracking_file)
-        .unwrap_or_else(|e| panic!("failed to read '{}': {}", tracking_file.display(), e))
+        .unwrap_or_else(|e| panic!("failed to read '{}': {e}", tracking_file.display()))
 }
 
-pub fn read_tracking_file_into_manifests(tracking_file: &std::path::Path) -> Vec<ManifestEntry> {
-    ManifestEntry::deserialize_manifests(&read_tracking_file_into_string(&tracking_file))
-}
+// pub fn read_tracking_file_into_manifest(tracking_file: &std::path::Path) -> Manifest {
+//     Manifest::deserialize_manifests(&read_tracking_file_into_string(&tracking_file))
+// }
 
 pub fn read_tracking_file_into_filepaths(tracking_file: &std::path::Path) -> Vec<String> {
     let mut strings = read_tracking_file_into_string(&tracking_file).lines()

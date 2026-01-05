@@ -1,5 +1,6 @@
 use crate::{read_tracking_file_into_filepaths, read_tracking_file_into_string, run, write_tracking_file, write_tracking_file_with_content, ProgramArgs, TRACKING_FILENAME};
-use std::env;
+use std::{env, io};
+use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -10,7 +11,7 @@ use rayon::prelude::*;
 
 
 use test_case::test_case;
-use crate::structures::ManifestEntry;
+use crate::structures::{Manifest, ManifestEntry};
 
 
 #[test_case("$HOME/Downloads")]
@@ -60,7 +61,7 @@ fn check_serialized_deserialization_is_same() {
     let file_content: String = read_tracking_file_into_string(&tracker_filepath);
 
     // deserialize from String, then serialize into String
-    let undeserailized = ManifestEntry::serialize_manifests(ManifestEntry::deserialize_manifests(&file_content).as_slice());
+    let undeserailized = Manifest::serialize(Manifest::deserialize_manifest(&file_content));
 
     assert_eq!(file_content.lines().collect::<Vec<_>>(), undeserailized);
 }
@@ -71,12 +72,20 @@ fn test_args_cli_track() {
 
     fn run_w_args(args: &[&str]) -> String { run(ProgramArgs::parse_from(args)) }
 
-    let root = creates_complicated_testing_tree("CLI", None);
+    let cli_path = "CLI";
+
+    let root = creates_complicated_testing_tree(cli_path, None);
     // let tracker = run_w_args(&["filesync", "--track", expand_home("$HOME/Downloads").to_str().unwrap()]);
     // let tracker1 = run_w_args(&["filesync", "--track", &root.to_str().unwrap()]);
     let tracker2 = run_w_args(&["filesync", "--track", &root.to_str().unwrap(), "-p", "f3"]);
 
+    let _ = remove_entries_with_prefix(&root, "f-");
 
+    // TODO - test a prefix that catches nothing
+
+    // check that this is indeed what's happening here directly in the tests and program
+    let tracking_file = write_tracking_file_with_content(root, None);
+    read_tracking_file_into_filepaths(&tracking_file);
 }
 
 /// tracking with specific prefixes (rather than all files)
@@ -89,14 +98,14 @@ fn test_picked_track_scans() {
 }
 
 
-// #[test]
+#[test]
 fn detect_differences_between_filetrees() {
     // need to read only paths because the creation date would be different
     let tracker_content_a = create_tree_and_tracker_and_read_paths("A", None);
-    let extras: Vec<String> = vec!["EXTRA/x.txt".into(), "EXTRA/y.txt".into()];
+    let extras: Vec<String> = vec!["EXTRA/".into(), "EXTRA/x.txt".into(), "EXTRA/y.txt".into()];
     let tracker_content_b = create_tree_and_tracker_and_read_paths("B", Some(&extras));  // B has "extra" files
 
-    assert_eq!(tracker_content_a, tracker_content_b);
+    assert_eq!(items_in_first_only(tracker_content_b, tracker_content_a), extras);
 }
 
 
@@ -141,23 +150,24 @@ fn creates_complicated_testing_tree(subdir: &str, extra: Option<&[String]>) -> P
     create_entry(&root, "ハwハwハ", b"unicode");
 
     // hierarchy/hidden
-    create_entry(&root, "f3/inner1", b"");
-    create_entry(&root, "f3/f4/inner2", b"inner2");
-    create_entry(&root, "f3/.hidden", b"hidden");
+    create_entry(&root, "f-3/inner1", b"");
+    create_entry(&root, "f-3/f4/inner2", b"inner2");
+    create_entry(&root, "f-3/.hidden", b"hidden");
 
     // empty
     create_entry(&root, "empty_dir/", b"");  // empty dir
     create_entry(&root, "empty_file", b"");  // empty file in root
 
     // extra instances
-    create_entry(&root, "f4/inner2", b"another inner2");  // "duplicate" file
-    create_entry(&root, &format!("f4/{}", TRACKING_FILENAME), b"another inner2");  // "duplicate" file
+    create_entry(&root, "f-4/inner2", b"another inner2");  // "duplicate" file
+    create_entry(&root, &format!("f4/{TRACKING_FILENAME}"), b"another inner2");  // "duplicate" file
 
     // links
     create_symlink(&root, "f5/sl1", "../f1/b.txt");
     create_symlink(&root, "f5/sl2", "sl1");  // f5/sl2 -> f5/sl1
     create_symlink(&root, "f5/f6/sl3", "../..");  // f5/f6/sl3 -> f5/
     create_symlink(&root, "f5/f6/sl4", expand_home("$HOME/Downloads").to_str().unwrap());  // link outside of project
+    create_symlink(&root, "f5/f6/broken", "../file_that_doesnt_exist");  // f5/f6/sl3 -> f5/
 
     // extras (optional)
     if let Some(extra) = extra {
@@ -195,6 +205,32 @@ fn create_entry(root: &Path, rel: &str, contents: &[u8]) -> PathBuf {
     file_path
 }
 
+/// Scans `dir` and removes all files and directories whose names start with `prefix`.
+pub fn remove_entries_with_prefix<P: AsRef<Path>>(root: P, prefix: &str,) -> io::Result<()> {
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        let name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(name) => name,
+            None => continue, // Skip non-UTF8 filenames
+        };
+
+        if name.starts_with(prefix) {
+            let file_type = entry.file_type()?;
+            println!("removing: {:?}", path);
+
+            if file_type.is_dir() {
+                fs::remove_dir_all(&path)?;
+            } else {
+                fs::remove_file(&path)?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn create_symlink(root: &Path, link_rel: &str, target: &str) -> PathBuf {
     let link_rel = link_rel.strip_prefix("./").unwrap_or(link_rel);
     let link_path = root.join(link_rel);
@@ -221,10 +257,11 @@ fn create_symlink(root: &Path, link_rel: &str, target: &str) -> PathBuf {
 fn find_escaped_output(dir: &std::path::Path) -> Vec<String> {
     let mut lines: Vec<String> = Command::new("sh")  // run "find" command
         .arg("-lc")
-        .arg(r"find . -mindepth 1 -printf '%P\0'")
+        // .arg(r"find . -mindepth 1 -printf '%P\0'")
+        .arg(r"find . -mindepth 1 \( -type d -printf '%P/\0' -o -type f -printf '%P\0' -o -type l -printf '%P\0' \)")
         .current_dir(dir)
         .output()       // shell command output
-        .inspect_err(|e| panic!("failed to run shell command in '{}': {}", dir.display(), e))
+        .inspect_err(|e| panic!("failed to run shell command in '{}': {e}", dir.display()))
         .inspect( |out| assert!(out.status.success(), "find failed in '{}': exit={:?}, stderr={}", dir.display(), out.status.code(), String::from_utf8_lossy(&out.stderr),) )
         .unwrap().stdout.par_split(|&b| b == 0)  // split stdout on \0
         .filter(|s| !s.is_empty())  // sanitize
@@ -234,5 +271,10 @@ fn find_escaped_output(dir: &std::path::Path) -> Vec<String> {
 
     lines.par_sort_unstable();  // no need to preserve equals' order; run it a bit faster
     lines
+}
+
+fn items_in_first_only(first: Vec<String>, second: Vec<String>) -> Vec<String> {
+    let second_set: HashSet<String> = second.into_iter().collect();
+    first.into_iter().filter(|item| !second_set.contains(item)).collect()
 }
 
